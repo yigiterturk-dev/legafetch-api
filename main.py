@@ -53,6 +53,15 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
 # Lisans anahtarlari: env'den coklu verilebilir (virgulle)
 LICENSE_KEYS = set(k.strip() for k in os.environ.get("X_LICENSE_KEYS", API_KEY).split(",") if k.strip())
 
+# --- KORPUS MODU: QDRANT_URL tanimliysa uzak (VPS) koleksiyona baglanir ---
+# Uzak korpus (lexordo_pasajlar) e5/Xenova-multilingual-e5-small ile gomulmustur;
+# e5 asimetrik oldugundan sorgular "query: " onekiyle embed edilir.
+QDRANT_URL = os.environ.get("QDRANT_URL", "").strip()
+QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "").strip()
+CORPUS_COLLECTION = os.environ.get("QDRANT_COLLECTION", "lexordo_pasajlar").strip()
+CORPUS_K = int(os.environ.get("CORPUS_K", "6"))
+REMOTE_MODE = bool(QDRANT_URL)
+
 
 def get_api_key(api_key_header: str = Security(api_key_header)):
     if secrets.compare_digest(api_key_header or "", API_KEY):
@@ -134,25 +143,33 @@ class ChatResponse(BaseModel):
     text: str
     sources: List[SourceMetadata]
 
-# 1. Çok Dilli (Multi-lingual) Embedding Modeli
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
-
-# 2. Qdrant: kalici lokal depo (restart'te veri kaybolmaz)
-qdrant_path = os.path.join(os.path.dirname(__file__), "qdrant_storage")
-client = QdrantClient(path=qdrant_path)
-collection_name = "legal_documents"
-
-if not client.collection_exists(collection_name):
-    client.create_collection(
-        collection_name=collection_name,
-        vectors_config=VectorParams(size=384, distance=Distance.COSINE),
-    )
-
-vector_store = QdrantVectorStore(
-    client=client,
-    collection_name=collection_name,
-    embedding=embeddings,
+# 1. Embedding modeli: uzak korpus = e5 (korpusun gomulme uzayiyla ayni);
+#    lokal demo modu = MiniLM (mevcut lokal koleksiyon degismez).
+embeddings = HuggingFaceEmbeddings(
+    model_name="intfloat/multilingual-e5-small" if REMOTE_MODE
+    else "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 )
+
+# 2. Qdrant: REMOTE_MODE'da salt-okunur uzak koleksiyon; degilse kalici lokal depo
+if REMOTE_MODE:
+    client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY or None, timeout=30)
+    collection_name = CORPUS_COLLECTION
+else:
+    qdrant_path = os.path.join(os.path.dirname(__file__), "qdrant_storage")
+    client = QdrantClient(path=qdrant_path)
+    collection_name = "legal_documents"
+
+    if not client.collection_exists(collection_name):
+        client.create_collection(
+            collection_name=collection_name,
+            vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+        )
+
+    vector_store = QdrantVectorStore(
+        client=client,
+        collection_name=collection_name,
+        embedding=embeddings,
+    )
 
 
 def stable_id(doc: Document) -> str:
@@ -186,7 +203,62 @@ def ensure_seed() -> None:
             ids=[stable_id(d) for d in sample_docs if d.page_content],
         )
 
-ensure_seed()
+
+# --- KORPUS ARAMA (REMOTE_MODE): lexordo payload -> Document donusumu ---
+CORPUS_AUTHORITY = [
+    ("anayasa", 97),
+    ("danistay", 93),
+    ("yargitay", 90),
+    ("bolge", 75),
+]
+
+
+def corpus_authority(payload: dict) -> int:
+    # yargiKademesi/belgeSinifi/id alanlarindan otorite skoru turetir.
+    hayir = " ".join(
+        str(payload.get(k, "")) for k in ("yargiKademesi", "belgeSinifi", "id")
+    ).lower()
+    for anahtar, skor in CORPUS_AUTHORITY:
+        if anahtar in hayir:
+            return skor
+    return 60
+
+
+def corpus_search(query: str, k: int) -> list:
+    # Uzak korpusa e5 'query: ' onekiyle semantic arama yapar.
+    vec = embeddings.embed_query("query: " + query)
+    sonuc = client.query_points(
+        collection_name,
+        query=vec,
+        limit=k,
+        query_filter=Filter(
+            must=[FieldCondition(key="sentetik", match=MatchValue(value=False))]
+        ),
+        with_payload=True,
+        with_vectors=False,
+    )
+    docs = []
+    for pt in sonuc.points:
+        p = pt.payload or {}
+        docs.append(
+            Document(
+                page_content=p.get("metin", ""),
+                metadata={
+                    "source": p.get("kaynak", "Bilinmeyen"),
+                    "authority_score": corpus_authority(p),
+                    "jurisdiction": "TR",
+                    "tarih": p.get("tarih", ""),
+                    "daire": p.get("daire", ""),
+                    "esasNo": p.get("esasNo", ""),
+                    "kararNo": p.get("kararNo", ""),
+                },
+            )
+        )
+    return docs
+
+
+if not REMOTE_MODE:
+    ensure_seed()
 
 
 @app.get("/health")
@@ -207,14 +279,21 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
         if jur:
             JURISDICTION_COUNTS[jur] = JURISDICTION_COUNTS.get(jur, 0) + 1
 
-        search_kwargs = {"k": 2}
-        if jur:
-            search_kwargs["filter"] = Filter(
-                must=[FieldCondition(key="metadata.jurisdiction",
-                                     match=MatchValue(value=jur))]
-            )
-        retriever = vector_store.as_retriever(search_kwargs=search_kwargs)
-        docs = retriever.invoke(request.query)
+        if REMOTE_MODE:
+            # Uzak korpus sadece TR ictihat icerir
+            if jur and jur != "TR":
+                docs = []
+            else:
+                docs = corpus_search(request.query, CORPUS_K)
+        else:
+            search_kwargs = {"k": 2}
+            if jur:
+                search_kwargs["filter"] = Filter(
+                    must=[FieldCondition(key="metadata.jurisdiction",
+                                         match=MatchValue(value=jur))]
+                )
+            retriever = vector_store.as_retriever(search_kwargs=search_kwargs)
+            docs = retriever.invoke(request.query)
 
         if not docs:
              return ChatResponse(
@@ -268,7 +347,10 @@ async def analyze_contract(file: UploadFile = File(...), api_key: str = Security
             text = ""
 
     query = text[:500] or f"{file.filename} sözleşme"
-    docs = vector_store.as_retriever(search_kwargs={"k": 2}).invoke(query)
+    if REMOTE_MODE:
+        docs = corpus_search(query, 3)
+    else:
+        docs = vector_store.as_retriever(search_kwargs={"k": 2}).invoke(query)
 
     sources_meta = [
         {
