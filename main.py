@@ -39,7 +39,15 @@ app.add_middleware(
 )
 
 # --- API KEY AUTHENTICATION ---
-API_KEY = os.environ.get("X_API_KEY", "LGF-ROTATED-2026")
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+API_KEY = os.environ.get("X_API_KEY", "")
+if not API_KEY:
+    raise RuntimeError("X_API_KEY tanimli degil: .env dosyasina yazilmali (gizli anahtar kodda durmaz)")
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
 
 # Lisans anahtarlari: env'den coklu verilebilir (virgulle)
