@@ -7,7 +7,15 @@ from fastapi.testclient import TestClient
 import main
 from main import app, check_rate_limit, _hits
 
-KEY = {"X-API-Key": "LGF-ROTATED-2026"}
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+API_KEY = os.environ.get("X_API_KEY", "")
+if not API_KEY:
+    pytest.skip("X_API_KEY .env dosyasinda tanimli olmali", allow_module_level=True)
+
+KEY = {"X-API-Key": API_KEY}
 
 
 @pytest.fixture(scope="session")
@@ -23,7 +31,7 @@ def test_wrong_api_key_401(client):
 
 
 def test_verify_valid_license(client):
-    r = client.post("/api/auth/verify", json={"license_key": "LGF-ROTATED-2026"})
+    r = client.post("/api/auth/verify", json={"license_key": API_KEY})
     assert r.status_code == 200 and r.json()["valid"] is True
 
 

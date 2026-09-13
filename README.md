@@ -37,7 +37,7 @@ Rate limit: IP başına 120 istek/dk (env `RATE_LIMIT_PER_MIN`).
 
 | Değişken | Varsayılan | Anlamı |
 |---|---|---|
-| `X_API_KEY` | `LGF-ROTATED-2026` | API lisans anahtarı |
+| `X_API_KEY` | `LGF-ENV-KEY` | API lisans anahtarı |
 | `X_LICENSE_KEYS` | `X_API_KEY` | Virgülle ayrılmış lisans anahtarları |
 | `RATE_LIMIT_PER_MIN` | `120` | IP başına dakikalık limit |
 | `CORS_ORIGINS` | `http://localhost:3000,http://localhost:3001` | İzinli origin'ler |
