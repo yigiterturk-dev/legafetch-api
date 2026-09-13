@@ -41,6 +41,17 @@ Rate limit: IP başına 120 istek/dk (env `RATE_LIMIT_PER_MIN`).
 | `X_LICENSE_KEYS` | `X_API_KEY` | Virgülle ayrılmış lisans anahtarları |
 | `RATE_LIMIT_PER_MIN` | `120` | IP başına dakikalık limit |
 | `CORS_ORIGINS` | `http://localhost:3000,http://localhost:3001` | İzinli origin'ler |
+| `QDRANT_URL` | _(boş)_ | Tanımlıysa KORPUS MODU: uzak Qdrant'a bağlanır (ör. `http://localhost:6333`) |
+| `QDRANT_API_KEY` | _(boş)_ | Uzak Qdrant API anahtarı (korpus modu) |
+| `QDRANT_COLLECTION` | `lexordo_pasajlar` | Uzak koleksiyon adı (korpus modu) |
+| `CORPUS_K` | `6` | Korpus modunda döndürülecek pasaj sayısı |
+
+### Korpus Modu (8M+ içtihat)
+
+`QDRANT_URL` tanımlandığında API, lokal demo koleksiyonu yerine uzak `lexordo_pasajlar`
+koleksiyonunda arama yapar (salt-okunur). Korpus e5/multilingual-e5-small ile gömülüdür;
+sorgular `query: ` önekiyle embed edilir. Lokal demo modu (`QDRANT_URL` boş) MiniLM
+modeliyle `qdrant_storage/` kullanır ve hiç değişmez.
 
 ## Test
 
