@@ -251,6 +251,7 @@ def corpus_search(query: str, k: int) -> list:
                     "daire": p.get("daire", ""),
                     "esasNo": p.get("esasNo", ""),
                     "kararNo": p.get("kararNo", ""),
+                    "docId": p.get("docId", ""),
                 },
             )
         )
