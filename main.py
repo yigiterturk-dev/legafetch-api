@@ -60,6 +60,7 @@ QDRANT_URL = os.environ.get("QDRANT_URL", "").strip()
 QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "").strip()
 CORPUS_COLLECTION = os.environ.get("QDRANT_COLLECTION", "lexordo_pasajlar").strip()
 CORPUS_K = int(os.environ.get("CORPUS_K", "6"))
+CORPUS_MAX_PER_BELGE = int(os.environ.get("CORPUS_MAX_PER_BELGE", "2"))
 REMOTE_MODE = bool(QDRANT_URL)
 
 
@@ -238,8 +239,15 @@ def corpus_search(query: str, k: int) -> list:
         with_vectors=False,
     )
     docs = []
+    belge_sayaci = {}
     for pt in sonuc.points:
         p = pt.payload or {}
+        did = p.get("docId", "")
+        if did:
+            sayi = belge_sayaci.get(did, 0)
+            if sayi >= CORPUS_MAX_PER_BELGE:
+                continue  # ayni karar chunk patlamasi -> cesitlilik icin atla
+            belge_sayaci[did] = sayi + 1
         docs.append(
             Document(
                 page_content=p.get("metin", ""),
