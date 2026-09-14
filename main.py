@@ -60,6 +60,9 @@ QDRANT_URL = os.environ.get("QDRANT_URL", "").strip()
 QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "").strip()
 CORPUS_COLLECTION = os.environ.get("QDRANT_COLLECTION", "lexordo_pasajlar").strip()
 CORPUS_K = int(os.environ.get("CORPUS_K", "6"))
+CORPUS_FETCH_K = int(os.environ.get("CORPUS_FETCH_K", "40"))
+CORPUS_MEVZUAT_K = int(os.environ.get("CORPUS_MEVZUAT_K", "8"))
+from rerank import rerank, RERANK_ENABLED  # noqa: E402
 CORPUS_MAX_PER_BELGE = int(os.environ.get("CORPUS_MAX_PER_BELGE", "2"))
 REMOTE_MODE = bool(QDRANT_URL)
 
@@ -208,6 +211,7 @@ def ensure_seed() -> None:
 # --- KORPUS ARAMA (REMOTE_MODE): lexordo payload -> Document donusumu ---
 CORPUS_AUTHORITY = [
     ("anayasa", 97),
+    ("mevzuat", 96),
     ("danistay", 93),
     ("yargitay", 90),
     ("bolge", 75),
@@ -223,6 +227,45 @@ def corpus_authority(payload: dict) -> int:
         if anahtar in hayir:
             return skor
     return 60
+
+
+def corpus_search_mevzuat(query: str, k: int) -> list:
+    # Ayni adimlar ama yalnizca mevzuat (kanun maddesi) pasajlari — her
+    # cevapta kanun dayanaginin temsili garanti olsun diye ayri kol.
+    vec = embeddings.embed_query("query: " + query)
+    sonuc = client.query_points(
+        collection_name,
+        query=vec,
+        limit=k,
+        query_filter=Filter(
+            must=[
+                FieldCondition(key="belgeSinifi", match=MatchValue(value="mevzuat")),
+                FieldCondition(key="sentetik", match=MatchValue(value=False)),
+            ]
+        ),
+        with_payload=True,
+        with_vectors=False,
+    )
+    docs = []
+    for pt in sonuc.points:
+        p = pt.payload or {}
+        docs.append(
+            Document(
+                page_content=p.get("metin", ""),
+                metadata={
+                    "source": p.get("kaynak", "Bilinmeyen"),
+                    "authority_score": corpus_authority(p),
+                    "jurisdiction": "TR",
+                    "tarih": p.get("tarih", ""),
+                    "daire": p.get("daire", ""),
+                    "esasNo": p.get("esasNo", ""),
+                    "kararNo": p.get("kararNo", ""),
+                    "docId": p.get("docId", ""),
+                    "tur": "mevzuat",
+                },
+            )
+        )
+    return docs
 
 
 def corpus_search(query: str, k: int) -> list:
@@ -289,11 +332,23 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
             JURISDICTION_COUNTS[jur] = JURISDICTION_COUNTS.get(jur, 0) + 1
 
         if REMOTE_MODE:
-            # Uzak korpus sadece TR ictihat icerir
+            # Uzak korpus ictihat + mevzuat; genis aday -> cross-encoder rerank
             if jur and jur != "TR":
                 docs = []
             else:
-                docs = corpus_search(request.query, CORPUS_K)
+                aday = corpus_search(request.query, max(CORPUS_K, CORPUS_FETCH_K))
+                mev_aday = corpus_search_mevzuat(request.query, CORPUS_MEVZUAT_K)
+                aday = aday + mev_aday
+                docs = rerank(request.query, aday, CORPUS_K)
+                # Kanun dayanagi temsili garanti: en iyi 2 mevzuat madde her
+                # cevapta yer alir (içtihat maddeye ATIF yapar, maddeyi İÇERMEZ)
+                mev_eniyi = rerank(request.query, mev_aday, min(2, CORPUS_MEVZUAT_K))
+                docs = (
+                    [d for d in docs if d.metadata.get("tur") != "mevzuat"][
+                        : max(0, CORPUS_K - len(mev_eniyi))
+                    ]
+                    + mev_eniyi
+                )
         else:
             search_kwargs = {"k": 2}
             if jur:
@@ -357,7 +412,8 @@ async def analyze_contract(file: UploadFile = File(...), api_key: str = Security
 
     query = text[:500] or f"{file.filename} sözleşme"
     if REMOTE_MODE:
-        docs = corpus_search(query, 3)
+        aday = corpus_search(query, max(3, CORPUS_FETCH_K))
+        docs = rerank(query, aday, 3)
     else:
         docs = vector_store.as_retriever(search_kwargs={"k": 2}).invoke(query)
 
