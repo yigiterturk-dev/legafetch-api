@@ -13,6 +13,8 @@ from qdrant_client.models import Distance, VectorParams, Filter, FieldCondition,
 from langchain_core.documents import Document
 
 import os
+import re
+from concurrent.futures import ThreadPoolExecutor
 import io
 import time
 import secrets
@@ -60,9 +62,12 @@ QDRANT_URL = os.environ.get("QDRANT_URL", "").strip()
 QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "").strip()
 CORPUS_COLLECTION = os.environ.get("QDRANT_COLLECTION", "lexordo_pasajlar").strip()
 CORPUS_K = int(os.environ.get("CORPUS_K", "6"))
-CORPUS_FETCH_K = int(os.environ.get("CORPUS_FETCH_K", "40"))
-CORPUS_MEVZUAT_K = int(os.environ.get("CORPUS_MEVZUAT_K", "8"))
-from rerank import rerank, RERANK_ENABLED  # noqa: E402
+# Rerank maliyeti cift sayisiyla dogrusal (CPU): 40+8 cift v2-m3 ile ~110 sn olculdu.
+# Varsayilanlar ~20 cifte indirildi (base model ile ~6-7 sn).
+CORPUS_FETCH_K = int(os.environ.get("CORPUS_FETCH_K", "15"))
+CORPUS_MEVZUAT_K = int(os.environ.get("CORPUS_MEVZUAT_K", "6"))
+CORPUS_MEVZUAT_FETCH_K = int(os.environ.get("CORPUS_MEVZUAT_FETCH_K", "24"))
+from rerank import rerank, rerank_scored, RERANK_ENABLED  # noqa: E402
 CORPUS_MAX_PER_BELGE = int(os.environ.get("CORPUS_MAX_PER_BELGE", "2"))
 REMOTE_MODE = bool(QDRANT_URL)
 
@@ -229,6 +234,23 @@ def corpus_authority(payload: dict) -> int:
     return 60
 
 
+KANUN_NO_RE = re.compile(r"(\d{3,5})\s*(?:say[iı]l[iı]|sayili)")
+
+
+def mevzuat_havuz_daralt(query: str, mev_aday: list) -> list:
+    """Sorguda acikca kanun numarasi (orn. '4857 sayili') geciyorsa mevzuat
+    adaylarini o kanuna daralt — cross-encoder yanlis kanundan madde
+    secmesin. Numara bulunamazsa havuz aynen doner."""
+    nolar = KANUN_NO_RE.findall(query)
+    if not nolar or not mev_aday:
+        return mev_aday
+    daralt = [
+        d for d in mev_aday
+        if any(no in d.metadata.get("source", "") for no in nolar)
+    ]
+    return daralt or mev_aday
+
+
 def corpus_search_mevzuat(query: str, k: int) -> list:
     # Ayni adimlar ama yalnizca mevzuat (kanun maddesi) pasajlari — her
     # cevapta kanun dayanaginin temsili garanti olsun diye ayri kol.
@@ -303,10 +325,22 @@ def corpus_search(query: str, k: int) -> list:
                     "esasNo": p.get("esasNo", ""),
                     "kararNo": p.get("kararNo", ""),
                     "docId": p.get("docId", ""),
+                    "tur": p.get("belgeSinifi", ""),
                 },
             )
         )
     return docs
+
+
+def _tekillestir(docs: list) -> list:
+    gorulen, out = set(), []
+    for d in docs:
+        anahtar = (d.metadata.get("source", ""), (d.page_content or "")[:120])
+        if anahtar in gorulen:
+            continue
+        gorulen.add(anahtar)
+        out.append(d)
+    return out
 
 
 if not REMOTE_MODE:
@@ -336,19 +370,34 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
             if jur and jur != "TR":
                 docs = []
             else:
-                aday = corpus_search(request.query, max(CORPUS_K, CORPUS_FETCH_K))
-                mev_aday = corpus_search_mevzuat(request.query, CORPUS_MEVZUAT_K)
-                aday = aday + mev_aday
-                docs = rerank(request.query, aday, CORPUS_K)
-                # Kanun dayanagi temsili garanti: en iyi 2 mevzuat madde her
-                # cevapta yer alir (içtihat maddeye ATIF yapar, maddeyi İÇERMEZ)
-                mev_eniyi = rerank(request.query, mev_aday, min(2, CORPUS_MEVZUAT_K))
-                docs = (
-                    [d for d in docs if d.metadata.get("tur") != "mevzuat"][
-                        : max(0, CORPUS_K - len(mev_eniyi))
-                    ]
-                    + mev_eniyi
+                # Iki Qdrant kolu birbirinden bagimsiz -> paralel (her biri ~5 sn olculdu)
+                with ThreadPoolExecutor(max_workers=2) as havuz:
+                    f_aday = havuz.submit(corpus_search, request.query, max(CORPUS_K, CORPUS_FETCH_K))
+                    f_mev = havuz.submit(corpus_search_mevzuat, request.query, CORPUS_MEVZUAT_FETCH_K)
+                    aday, mev_ham = f_aday.result(), f_mev.result()
+                # Mevzuat havuzu Qdrant'tan genis cekilir (ucuz), kanun no'ya
+                # daraltilir, sonra yalnizca ilk CORPUS_MEVZUAT_K'si rerank'e
+                # girer (pahali). Tek rerank gecisi: ictihat + mevzuat birlikte.
+                mev_aday = mevzuat_havuz_daralt(request.query, mev_ham)[:CORPUS_MEVZUAT_K]
+                # Genel havuzdan gelen mevzuat parcalari da kanun-no daraltmasindan gecsin
+                ictihat_aday = [d for d in aday if d.metadata.get("tur") != "mevzuat"]
+                mev_aday = mevzuat_havuz_daralt(
+                    request.query,
+                    [d for d in aday if d.metadata.get("tur") == "mevzuat"] + mev_aday,
                 )
+                skorlu = rerank_scored(request.query, _tekillestir(ictihat_aday + mev_aday))
+                # Kanun dayanagi temsili garanti: en iyi 2 FARKLI madde her
+                # cevapta yer alir (içtihat maddeye ATIF yapar, maddeyi İÇERMEZ)
+                mev_eniyi, gorulen_madde = [], set()
+                for d, _ in skorlu:
+                    kaynak = d.metadata.get("source", "")
+                    if d.metadata.get("tur") == "mevzuat" and kaynak not in gorulen_madde:
+                        gorulen_madde.add(kaynak)
+                        mev_eniyi.append(d)
+                    if len(mev_eniyi) == 2:
+                        break
+                ictihat = [d for d, _ in skorlu if d.metadata.get("tur") != "mevzuat"]
+                docs = ictihat[: max(0, CORPUS_K - len(mev_eniyi))] + mev_eniyi
         else:
             search_kwargs = {"k": 2}
             if jur:

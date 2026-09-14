@@ -1,0 +1,18 @@
+services:
+  legafetch-api:
+    build: .
+    image: legafetch-api:latest
+    container_name: legafetch-api
+    restart: unless-stopped
+    mem_limit: 4000m
+    memswap_limit: 4000m
+    env_file: .env.production
+    networks: [lexordo_default]
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    expose: ["8000"]
+networks:
+  lexordo_default:
+    external: true
+volumes:
+  hf-cache:
