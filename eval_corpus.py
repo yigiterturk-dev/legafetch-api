@@ -6,13 +6,18 @@ Kontrol:
   A) oz-kaynakli geri-getirme (self-retrieval) hit@5 + gecikme
   B) gercek dunya sorgularinda sonuc donmesi + turcesli gozlem
 """
-import os, sys, time, random
+import os, re, sys, time, random
 import main  # noqa: E402  (uygulama baslatilir, corpus_search gercek urun yolunu test eder)
 from qdrant_client.models import Filter, FieldCondition, MatchValue  # noqa: E402
 from qdrant_client import QdrantClient  # noqa: E402
 
 random.seed(7)
 K = 5
+
+# Karar başlığı / bölüm işareti parçaları ("III. İLK DERECE MAHKEMESİ KARARI",
+# "II. CEVAP ...") 25 bin kararın hepsinde yapısal olarak aynıdır; saf vektör
+# benzerliği bunları kaynağından ayırt edemez. Ölçüm dışı bırakılır.
+YAPISAL = re.compile(r"^(TEMYİZ|CEVAP|İLK DERECE|İNCELEME|UYUŞMAZLIK|HUKUKİ DEĞERLENDİRME|İLGİLİ MEVZUAT|KARAR|DAVA VE HUKUKİ|\*\*\d+\. Hukuk|Sayın çoğunluk|Taraflar arasındaki davanın|Kararın taraf vekillerince)", re.I)
 
 print("== A) Oz-kaynakli geri-getirme testi ==")
 # 1) 60 nokta tara, 40 tanesini test sec
@@ -25,9 +30,13 @@ pts = src_client.scroll(main.collection_name, limit=24,
 ornekler = random.sample(pts, min(20, len(pts)))
 hits, miss, lat = [], [], []
 for p in ornekler:
-    metin = (p.payload.get("metin") or "").replace("\n", " ")[:180].strip()
+    # TAM parça metni sorgulanır. Kesik (180 karakterlik) parça sorgusu e5
+    # uzayında parçanın kendisinden kopar ve yapay düşüş üretir: tam parça
+    # hit@5 %100 iken önek sorgusu %30'a düşer. Gerçek ürün sorgusu da
+    # bütün sorudur; kesik önek gerçekçi bir senaryo değildir.
+    metin = (p.payload.get("metin") or "").replace("\n", " ").strip()
     doc_id = p.payload.get("docId", "")
-    if len(metin) < 60:
+    if len(metin) < 120 or YAPISAL.match(metin[:200]):
         continue
     t0 = time.time()
     docs = main.corpus_search(metin, K)
