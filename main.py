@@ -65,8 +65,16 @@ CORPUS_K = int(os.environ.get("CORPUS_K", "6"))
 # Rerank maliyeti cift sayisiyla dogrusal (CPU): 40+8 cift v2-m3 ile ~110 sn olculdu.
 # Varsayilanlar ~20 cifte indirildi (base model ile ~6-7 sn).
 CORPUS_FETCH_K = int(os.environ.get("CORPUS_FETCH_K", "15"))
-CORPUS_MEVZUAT_K = int(os.environ.get("CORPUS_MEVZUAT_K", "6"))
+CORPUS_MEVZUAT_K = int(os.environ.get("CORPUS_MEVZUAT_K", "8"))
+# Mevzuat kolu 2026-09-17 audit sonrasi: fetch 24 zaten vardi ama MEVZUAT_K 6
+# kalince dogru madde (TKHK m.5 gibi) semantik top-6'ya girip rerank'a
+# ulasamiyordu; cap 8'e cikarildi ve anahtar-sorgu probe'u eklendi.
 CORPUS_MEVZUAT_FETCH_K = int(os.environ.get("CORPUS_MEVZUAT_FETCH_K", "24"))
+# Mevzuat seciminde anahtar-kelime cakisma boost'u: bge-reranker-base kisa
+# kanun maddelerinde ~0 skor uretip ayirt edemedigi icin, sorgu terimlerinin
+# madde metninde gecme oranina kucuk bir bonus eklenir (yalnizca mevzuat
+# seciminde; ictihat siralamasi saf rerank skoruyla kalir).
+MEVZUAT_KW_BOOST = float(os.environ.get("MEVZUAT_KW_BOOST", "0.6"))
 from rerank import rerank, rerank_scored, RERANK_ENABLED  # noqa: E402
 CORPUS_MAX_PER_BELGE = int(os.environ.get("CORPUS_MAX_PER_BELGE", "2"))
 REMOTE_MODE = bool(QDRANT_URL)
@@ -236,6 +244,47 @@ def corpus_authority(payload: dict) -> int:
 
 KANUN_NO_RE = re.compile(r"(\d{3,5})\s*(?:say[iı]l[iı]|sayili)")
 
+# --- Anahtar-sorgu araci (mevzuat kolu icin) ------------------------------
+_TR_FOLD = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiösuCGIOSU")
+_MEVZUAT_DURAK = {
+    "ve", "veya", "ile", "icin", "gibi", "hangi", "nasil", "ne", "kim",
+    "mi", "midir", "mudur", "olur", "olabilir", "kac", "gundur", "gune",
+    "gununde", "surede", "suresi", "sure", "tarihi", "tarihinden",
+    "uygulanir", "kabul", "edilir", "alabilir", "bakilabilir",
+    "acilabilir", "edilebilir", "isler", "yapilabilir", "davasi",
+    "davasinda", "davasindan", "davasiyla", "davada",
+}
+
+
+def _norm_metin(s: str) -> str:
+    """Turkce karakterleri ASCII'ye indirip kucultur — karsilastirma icin.
+    NOT: ceviri lower()'dan ONCE yapilir — 'İ'.lower() Python'da 'i'+
+    birlestiren nokta (U+0307) uretip eslesmeyi bozar."""
+    return (s or "").translate(_TR_FOLD).lower()
+
+
+def _anahtar_sorgu(query: str) -> str:
+    """Sorgudan stopword'suz anahtar probe uretir. Orn.
+    'tuketici sozlesmesindeki haksiz madde iptali davasi' ->
+    'tuketici sozlesmesindeki haksiz madde iptali'."""
+    tok = [
+        t for t in re.findall(r"[a-z0-9]+", _norm_metin(query))
+        if len(t) > 2 and t not in _MEVZUAT_DURAK
+    ]
+    return " ".join(tok[:6])
+
+
+def _anahtar_hit_orani(query: str, metin: str) -> float:
+    """Sorgunun icerik sozcuklerinin kaci madde metninde geciyor — orani."""
+    tok = {
+        t for t in re.findall(r"[a-z0-9]+", _norm_metin(query))
+        if len(t) > 2 and t not in _MEVZUAT_DURAK
+    }
+    if not tok:
+        return 0.0
+    metin_n = _norm_metin(metin or "")
+    return sum(1 for t in tok if t in metin_n) / len(tok)
+
 
 def mevzuat_havuz_daralt(query: str, mev_aday: list) -> list:
     """Sorguda acikca kanun numarasi (orn. '4857 sayili') geciyorsa mevzuat
@@ -251,10 +300,9 @@ def mevzuat_havuz_daralt(query: str, mev_aday: list) -> list:
     return daralt or mev_aday
 
 
-def corpus_search_mevzuat(query: str, k: int) -> list:
-    # Ayni adimlar ama yalnizca mevzuat (kanun maddesi) pasajlari — her
-    # cevapta kanun dayanaginin temsili garanti olsun diye ayri kol.
-    vec = embeddings.embed_query("query: " + query)
+def _mevzuat_dense_ara(sorgu: str, k: int) -> list:
+    """Tek bir sorgu icin mevzuat filtreli dense arama."""
+    vec = embeddings.embed_query("query: " + sorgu)
     sonuc = client.query_points(
         collection_name,
         query=vec,
@@ -288,6 +336,33 @@ def corpus_search_mevzuat(query: str, k: int) -> list:
             )
         )
     return docs
+
+
+def corpus_search_mevzuat(query: str, k: int) -> list:
+    """Mevzuat kolunda IKI probe: tam soru + anahtar sorgu. 2026-09-17 audit
+    olcumu: tam soru embedding'i konu-yonlu sorularda kanun maddesini
+    bulamıyor (TKHK m.5 top-24'te bile gorunmuyordu); stopword'suz anahtar
+    probe'u m.5'i top-7'ye cikardi. Iki sonuc interleave edilir — her iki
+    siralamanin da en iyileri rerank havuzuna girer."""
+    tam = _mevzuat_dense_ara(query, k)
+    anahtar = _anahtar_sorgu(query)
+    if not anahtar or _norm_metin(anahtar) == _norm_metin(query):
+        return tam
+    probe = _mevzuat_dense_ara(anahtar, max(2, k // 2))
+    gorulen, birlesik = set(), []
+    for a, b in zip(tam, probe + [None] * len(tam)):
+        for d in (a, b):
+            if d is None:
+                continue
+            anahtar_k = (
+                d.metadata.get("source", ""),
+                (d.page_content or "")[:80],
+            )
+            if anahtar_k in gorulen:
+                continue
+            gorulen.add(anahtar_k)
+            birlesik.append(d)
+    return birlesik
 
 
 def corpus_search(query: str, k: int) -> list:
@@ -365,12 +440,26 @@ def corpus_rank(query: str, k: int = None) -> list:
     )
     ictihat_aday = [d for d in aday if d.metadata.get("tur") != "mevzuat"]
     skorlu = rerank_scored(query, _tekillestir(ictihat_aday + mev_aday))
+    # Mevzuat secimi: rerank skoru + anahtar-cakisma boost'u. Olculdu
+    # (2026-09-17): bge-reranker-base kisa kanun maddelerinde ~0 skor
+    # uretip TCK Geçici-1'i TKHK'nin ustune koyabiliyor; keyword cakismasi
+    # ikinci bir sinyal olarak eklenir (yalnizca mevzuat seciminde).
+    mev_skorlu = [
+        (
+            d,
+            (s if s is not None else 0.0)
+            + MEVZUAT_KW_BOOST * _anahtar_hit_orani(query, d.page_content),
+        )
+        for d, s in skorlu
+        if d.metadata.get("tur") == "mevzuat"
+    ]
+    mev_skorlu.sort(key=lambda x: x[1], reverse=True)
     # Kanun dayanagi temsili garanti: en iyi 2 FARKLI madde her cevapta yer
     # alir (içtihat maddeye ATIF yapar, maddeyi İÇERMEZ)
     mev_eniyi, gorulen_madde = [], set()
-    for d, _ in skorlu:
+    for d, _ in mev_skorlu:
         kaynak = d.metadata.get("source", "")
-        if d.metadata.get("tur") == "mevzuat" and kaynak not in gorulen_madde:
+        if kaynak not in gorulen_madde:
             gorulen_madde.add(kaynak)
             mev_eniyi.append(d)
         if len(mev_eniyi) == 2:
