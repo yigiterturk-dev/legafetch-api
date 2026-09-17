@@ -343,6 +343,42 @@ def _tekillestir(docs: list) -> list:
     return out
 
 
+# --- URETIM SIRALAMA HATTI (REMOTE_MODE) --------------------------------
+# /api/chat ile eval'lerin AYNI yolu olcmesi icin handler'dan cikarildi.
+# Ders (2026-09-17 eval_rerank): eval kendi kopyasini yazinca mevzuat kolu
+# hic olculmedi ve "mevzuat=0" yanlisi cikti — olcum = uretim olmali.
+def corpus_rank(query: str, k: int = None) -> list:
+    """Ictihat + mevzuat kollari (paralel) -> kanun-no daraltma -> tek gecis
+    rerank -> garanti en iyi 2 FARKLI mevzuat madde. Uretim ve eval ortak yol."""
+    k = k if k is not None else CORPUS_K
+    with ThreadPoolExecutor(max_workers=2) as havuz:
+        f_aday = havuz.submit(corpus_search, query, max(k, CORPUS_FETCH_K))
+        f_mev = havuz.submit(corpus_search_mevzuat, query, CORPUS_MEVZUAT_FETCH_K)
+        aday, mev_ham = f_aday.result(), f_mev.result()
+    # Mevzuat havuzu Qdrant'tan genis cekilir (ucuz), kanun no'ya daraltilir,
+    # sonra yalnizca ilk CORPUS_MEVZUAT_K'si rerank'e girer (pahali).
+    mev_aday = mevzuat_havuz_daralt(query, mev_ham)[:CORPUS_MEVZUAT_K]
+    # Genel havuzdan gelen mevzuat parcalari da kanun-no daraltmasindan gecsin
+    mev_aday = mevzuat_havuz_daralt(
+        query,
+        [d for d in aday if d.metadata.get("tur") == "mevzuat"] + mev_aday,
+    )
+    ictihat_aday = [d for d in aday if d.metadata.get("tur") != "mevzuat"]
+    skorlu = rerank_scored(query, _tekillestir(ictihat_aday + mev_aday))
+    # Kanun dayanagi temsili garanti: en iyi 2 FARKLI madde her cevapta yer
+    # alir (içtihat maddeye ATIF yapar, maddeyi İÇERMEZ)
+    mev_eniyi, gorulen_madde = [], set()
+    for d, _ in skorlu:
+        kaynak = d.metadata.get("source", "")
+        if d.metadata.get("tur") == "mevzuat" and kaynak not in gorulen_madde:
+            gorulen_madde.add(kaynak)
+            mev_eniyi.append(d)
+        if len(mev_eniyi) == 2:
+            break
+    ictihat = [d for d, _ in skorlu if d.metadata.get("tur") != "mevzuat"]
+    return ictihat[: max(0, k - len(mev_eniyi))] + mev_eniyi
+
+
 if not REMOTE_MODE:
     ensure_seed()
 
@@ -366,38 +402,12 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
             JURISDICTION_COUNTS[jur] = JURISDICTION_COUNTS.get(jur, 0) + 1
 
         if REMOTE_MODE:
-            # Uzak korpus ictihat + mevzuat; genis aday -> cross-encoder rerank
+            # Uzak korpus ictihat + mevzuat; siralama hatti corpus_rank'ta —
+            # eval ayni fonksiyonu olcer (olcum = uretim).
             if jur and jur != "TR":
                 docs = []
             else:
-                # Iki Qdrant kolu birbirinden bagimsiz -> paralel (her biri ~5 sn olculdu)
-                with ThreadPoolExecutor(max_workers=2) as havuz:
-                    f_aday = havuz.submit(corpus_search, request.query, max(CORPUS_K, CORPUS_FETCH_K))
-                    f_mev = havuz.submit(corpus_search_mevzuat, request.query, CORPUS_MEVZUAT_FETCH_K)
-                    aday, mev_ham = f_aday.result(), f_mev.result()
-                # Mevzuat havuzu Qdrant'tan genis cekilir (ucuz), kanun no'ya
-                # daraltilir, sonra yalnizca ilk CORPUS_MEVZUAT_K'si rerank'e
-                # girer (pahali). Tek rerank gecisi: ictihat + mevzuat birlikte.
-                mev_aday = mevzuat_havuz_daralt(request.query, mev_ham)[:CORPUS_MEVZUAT_K]
-                # Genel havuzdan gelen mevzuat parcalari da kanun-no daraltmasindan gecsin
-                ictihat_aday = [d for d in aday if d.metadata.get("tur") != "mevzuat"]
-                mev_aday = mevzuat_havuz_daralt(
-                    request.query,
-                    [d for d in aday if d.metadata.get("tur") == "mevzuat"] + mev_aday,
-                )
-                skorlu = rerank_scored(request.query, _tekillestir(ictihat_aday + mev_aday))
-                # Kanun dayanagi temsili garanti: en iyi 2 FARKLI madde her
-                # cevapta yer alir (içtihat maddeye ATIF yapar, maddeyi İÇERMEZ)
-                mev_eniyi, gorulen_madde = [], set()
-                for d, _ in skorlu:
-                    kaynak = d.metadata.get("source", "")
-                    if d.metadata.get("tur") == "mevzuat" and kaynak not in gorulen_madde:
-                        gorulen_madde.add(kaynak)
-                        mev_eniyi.append(d)
-                    if len(mev_eniyi) == 2:
-                        break
-                ictihat = [d for d, _ in skorlu if d.metadata.get("tur") != "mevzuat"]
-                docs = ictihat[: max(0, CORPUS_K - len(mev_eniyi))] + mev_eniyi
+                docs = corpus_rank(request.query)
         else:
             search_kwargs = {"k": 2}
             if jur:

@@ -1,7 +1,13 @@
-"""Reranker A/B: ayni adaylar, rerank acik/kapali. mevzuat gorunurlugu + top-1."""
-import os, time
+"""Reranker A/B: uretim hatti (corpus_rank) ile reranksiz tek-kol baseline.
+
+2026-09-17 ders: eski surum yalnizca main.corpus_search cagirip mevzuat
+kolunu hic olcmuyordu; sayac da ASCII ('Sayil', 'Kanunu') sniffliyordu,
+Turkce kaynaklar ('Sayılı', 'Kanun —') hic yakalanmiyordu. Artik uretimle
+ayni yol (main.corpus_rank) olculur, mevzuat sayaci metadata 'tur'
+alanindan gelir.
+"""
+import time
 import main  # noqa
-from rerank import rerank
 
 SORULAR = [
     "4857 sayili kanuna gore iseci iade davasinda arabuluculuk sart mi?",
@@ -17,14 +23,14 @@ SORULAR = [
 ]
 
 for q in SORULAR:
-    aday = main.corpus_search(q, 40)
-    eski = aday[:6]  # iki kolsuz eski davranis (mevzuat sadece tesadufen girerse gorunur)
-    yeni = rerank(q, aday, 6)
+    t0 = time.time()
+    eski = main.corpus_search(q, main.CORPUS_K)[:6]  # rerank+mevzuat kolu yok (eski davranis)
+    yeni = main.corpus_rank(q, 6)                    # uretim: iki kol + daralt + rerank + garanti
+    sure = time.time() - t0
     def mev(d):
-        m = d.metadata.get("source", "")
-        return "MEV" if ("Sayil" in m or "Kanunu" in m or "Anayasas" in m) else "ict"
-    print(f"SORU: {q[:55]}")
-    print(f"  reranksiz : {[m for m in map(lambda d: d.metadata['source'][:40], eski)]}".replace("[", "").replace("]", "").replace("'", ""))
-    print(f"  rerankli  : {[m for m in map(lambda d: d.metadata['source'][:40], yeni)]}".replace("[", "").replace("]", "").replace("'", ""))
-    print(f"  mevzuat: reranksiz={sum(1 for d in eski if 'mev' == 'x' or 'Sayil' in d.metadata.get('source','') or 'Kanunu' in d.metadata.get('source',''))} rerankli={sum(1 for d in yeni if 'Sayil' in d.metadata.get('source','') or 'Kanunu' in d.metadata.get('source',''))}")
+        return 1 if d.metadata.get("tur") == "mevzuat" else 0
+    print(f"SORU: {q[:55]}  [{sure:.1f}s]")
+    print(f"  reranksiz : {[d.metadata['source'][:40] for d in eski]}")
+    print(f"  uretim    : {[d.metadata['source'][:40] for d in yeni]}")
+    print(f"  mevzuat: eski={sum(map(mev, eski))} uretim={sum(map(mev, yeni))} (garanti: >=2)")
     print(flush=True)
