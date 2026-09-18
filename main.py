@@ -608,6 +608,8 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
                 sources=[]
             )
 
+        # Keyless extractive kompozisyon: otorite skoruna gore numaralandir
+        ranked = sorted(docs, key=lambda d: d.metadata.get("authority_score", 50), reverse=True)
         # Kaynak numaralari LLM atiflariyla ayni sirada dursun diye once kur
         kaynak_listesi = "\n".join(
             f"[{i}] {d.metadata.get('source', 'Bilinmeyen')}"
