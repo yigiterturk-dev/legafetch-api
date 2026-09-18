@@ -242,6 +242,37 @@ def corpus_authority(payload: dict) -> int:
     return 60
 
 
+def temiz_kaynak(p: dict) -> str:
+    """Yapısal alanlardan (yargiKademesi, daire, esasNo, kararNo) okunur
+    kaynak etiketi kurar. 2026-09-17 audit bulgusu: istinaf kayıtlarında
+    ham 'kaynak' BAM önekiyle ilk derece mahkemesini iç içe gösteriyordu:
+    'Bölge Adliye Mahkemesi Bursa 2. Asliye Ticaret Mahkemesi E. ...'
+    Aynı sorunu tekrarlayan etiketler de vardı ('İstanbul BAM İstanbul BAM
+    6. Hukuk'). Alanlar varsa temiz kur, yoksa ham 'kaynak'a dön."""
+    if (p.get("belgeSinifi") or "") != "yargi-karari":
+        return p.get("kaynak") or "Bilinmeyen"
+    daire = (p.get("daire") or "").strip()
+    if not daire:
+        return p.get("kaynak") or "Bilinmeyen"
+    kademe = (p.get("yargiKademesi") or "").strip()
+    d_low = _norm_metin(daire)
+    if kademe == "istinaf":
+        # daire alanı şehirli tam ad taşıyor ("Bursa 2. Asliye Ticaret ...")
+        mahkeme = daire
+    elif kademe == "temyiz":
+        mahkeme = daire if "yargitay" in d_low else f"Yargıtay {daire}"
+    elif kademe == "yuksek-mahkeme":
+        mahkeme = daire if "danistay" in d_low else f"Danıştay {daire}"
+    else:
+        return p.get("kaynak") or "Bilinmeyen"
+    parcalar = [mahkeme]
+    if p.get("esasNo"):
+        parcalar.append("E. " + str(p["esasNo"]))
+    if p.get("kararNo"):
+        parcalar.append("K. " + str(p["kararNo"]))
+    return ", ".join(parcalar)
+
+
 KANUN_NO_RE = re.compile(r"(\d{3,5})\s*(?:say[iı]l[iı]|sayili)")
 
 # --- Anahtar-sorgu araci (mevzuat kolu icin) ------------------------------
@@ -323,7 +354,7 @@ def _mevzuat_dense_ara(sorgu: str, k: int) -> list:
             Document(
                 page_content=p.get("metin", ""),
                 metadata={
-                    "source": p.get("kaynak", "Bilinmeyen"),
+                    "source": temiz_kaynak(p),
                     "authority_score": corpus_authority(p),
                     "jurisdiction": "TR",
                     "tarih": p.get("tarih", ""),
@@ -392,7 +423,7 @@ def corpus_search(query: str, k: int) -> list:
             Document(
                 page_content=p.get("metin", ""),
                 metadata={
-                    "source": p.get("kaynak", "Bilinmeyen"),
+                    "source": temiz_kaynak(p),
                     "authority_score": corpus_authority(p),
                     "jurisdiction": "TR",
                     "tarih": p.get("tarih", ""),
