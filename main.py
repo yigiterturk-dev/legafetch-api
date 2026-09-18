@@ -14,6 +14,8 @@ from langchain_core.documents import Document
 
 import os
 import re
+import json
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 import io
 import time
@@ -75,6 +77,13 @@ CORPUS_MEVZUAT_FETCH_K = int(os.environ.get("CORPUS_MEVZUAT_FETCH_K", "24"))
 # madde metninde gecme oranina kucuk bir bonus eklenir (yalnizca mevzuat
 # seciminde; ictihat siralamasi saf rerank skoruyla kalir).
 MEVZUAT_KW_BOOST = float(os.environ.get("MEVZUAT_KW_BOOST", "0.6"))
+# --- Uretici katman (OpenAI) ---------------------------------------------
+# OPENAI_API_KEY tanimliysa /api/chat pasajlari modele verip gercek bir
+# yanit uretir; anahtar yoksa veya cagri hata verirse keyless extractive
+# kompozisyona dusulur (fail-open — urun asla bozulmaz).
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip()
+OPENAI_TIMEOUT_S = int(os.environ.get("OPENAI_TIMEOUT_S", "40"))
 from rerank import rerank, rerank_scored, RERANK_ENABLED  # noqa: E402
 CORPUS_MAX_PER_BELGE = int(os.environ.get("CORPUS_MAX_PER_BELGE", "2"))
 REMOTE_MODE = bool(QDRANT_URL)
@@ -438,6 +447,61 @@ def corpus_search(query: str, k: int) -> list:
     return docs
 
 
+def llm_cevap(query: str, ranked: list) -> str | None:
+    """Pasajlara dayalı OpenAI sentezi. Anahtar yok / hata olursa None —
+    çağıran taraf keyless extractive kompozisyona düşer."""
+    if not OPENAI_API_KEY or not ranked:
+        return None
+    pasajlar = "\n\n".join(
+        f"[{i}] (Kaynak: {d.metadata.get('source', 'Bilinmeyen')})\n"
+        f"{(d.page_content or '')[:900]}"
+        for i, d in enumerate(ranked, start=1)
+    )
+    system = (
+        "Sen Türk hukuku konusunda uzman bir hukuk asistanısın. Sana kullanıcının "
+        "sorusu ve numaralandırılmış yargı kararı / mevzuat pasajları verilecek.\n"
+        "Kurallar:\n"
+        "1) YALNIZCA verilen pasajlara dayanarak yanıt ver; pasajlarda olmayan "
+        "hukuki bilgi veya karar uydurma.\n"
+        "2) Her somut iddiayı [n] biçiminde pasaj numarasına atıfla.\n"
+        "3) Pasajlar soruyu karşılamıyorsa bunu açıkça söyle; tahmin yürütme.\n"
+        "4) Türkçe, profesyonel ve sade yaz; 350 kelimeyi aşma.\n"
+        "5) Sonda tek cümlelik yasal uyarı ekle."
+    )
+    govde = json.dumps(
+        {
+            "model": OPENAI_MODEL,
+            "messages": [
+                {"role": "system", "content": system},
+                {
+                    "role": "user",
+                    "content": f"Soru: {query}\n\nPasajlar:\n{pasajlar}",
+                },
+            ],
+            "temperature": 0.2,
+            "max_tokens": 700,
+        },
+        ensure_ascii=False,
+    )
+    istek = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=govde.encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+        },
+        method="POST",
+    )
+    try:
+        yanit = json.loads(
+            urllib.request.urlopen(istek, timeout=OPENAI_TIMEOUT_S).read()
+        )
+        metin = (yanit["choices"][0]["message"]["content"] or "").strip()
+        return metin or None
+    except Exception:
+        return None
+
+
 def _tekillestir(docs: list) -> list:
     gorulen, out = set(), []
     for d in docs:
@@ -544,20 +608,29 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
                 sources=[]
             )
 
-        # Keyless extractive kompozisyon: otorite skoruna gore numaralandir
-        ranked = sorted(docs, key=lambda d: d.metadata.get("authority_score", 50), reverse=True)
-        parts = [
-            f"[{i}] {doc.page_content}\n"
-            f"    Kaynak: {doc.metadata.get('source', 'Bilinmeyen')} "
-            f"(güven %{doc.metadata.get('authority_score', 50)}, "
-            f"{doc.metadata.get('jurisdiction', 'Global')})"
-            for i, doc in enumerate(ranked, start=1)
-        ]
-        context_text = (
-            f"Toplam {len(ranked)} kaynak bulundu. En alakalı pasajlar:\n\n"
-            + "\n\n".join(parts)
-            + "\n\nNot: Cevap vektör aramasından derlenmiştir; üretici dil modeli henüz bağlı değildir."
+        # Kaynak numaralari LLM atiflariyla ayni sirada dursun diye once kur
+        kaynak_listesi = "\n".join(
+            f"[{i}] {d.metadata.get('source', 'Bilinmeyen')}"
+            for i, d in enumerate(ranked, start=1)
         )
+        # Uretici katman: OPENAI_API_KEY varsa pasajlara dayali gercek yanit;
+        # anahtar yok / cagri basarisizsa keyless extractive kompozisyona dus.
+        uretilen = llm_cevap(request.query, ranked)
+        if uretilen:
+            context_text = uretilen + "\n\nKaynaklar:\n" + kaynak_listesi
+        else:
+            parts = [
+                f"[{i}] {doc.page_content}\n"
+                f"    Kaynak: {doc.metadata.get('source', 'Bilinmeyen')} "
+                f"(güven %{doc.metadata.get('authority_score', 50)}, "
+                f"{doc.metadata.get('jurisdiction', 'Global')})"
+                for i, doc in enumerate(ranked, start=1)
+            ]
+            context_text = (
+                f"Toplam {len(ranked)} kaynak bulundu. En alakalı pasajlar:\n\n"
+                + "\n\n".join(parts)
+                + "\n\nNot: Cevap vektör aramasından derlenmiştir; üretici dil modeli bağlı değil."
+            )
 
         sources_meta = [
             SourceMetadata(
