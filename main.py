@@ -12,6 +12,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, Filter, FieldCondition, MatchValue
 from langchain_core.documents import Document
 
+import ipaddress
 import os
 import re
 import json
@@ -120,8 +121,40 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 
 # --- Rate limiting: IP basina kayan pencere ---
 RATE_LIMIT_PER_MIN = int(os.environ.get("RATE_LIMIT_PER_MIN", "120"))
+# Lisans dogrulamasi icin AYRI ve cok daha sikı kova: anahtar denemesi kaba
+# kuvvete acik oldugundan genel istek limitiyle ayni kovadan sayilmamali.
+AUTH_RATE_LIMIT_PER_MIN = int(os.environ.get("AUTH_RATE_LIMIT_PER_MIN", "10"))
 _hits: dict = {}
+_auth_hits: dict = {}
 _last_cleanup = 0.0
+
+
+def _ozel_ip(ip: str) -> bool:
+    """Onumuzdeki guvenilen vekiller (Caddy, web konteyneri) hep ozel aglardan gelir."""
+    try:
+        return ipaddress.ip_address(ip).is_private or ipaddress.ip_address(ip).is_loopback
+    except ValueError:
+        return False
+
+
+def istemci_ip(request) -> str:
+    """Gercek istemci adresi.
+
+    🔴 ONCEKI HALI GUVENLIKSIZDI (duzeltildi 2026-09-21): X-Forwarded-For'un
+    ILK degeri aliniyordu; o deger tamamen istemcinin yazdigi seydir. Caddy
+    gercek adresi basligin SONUNA ekler, bastakini silmez — dolayisiyla her
+    istege rastgele bir XFF yazan biri her seferinde yeni bir kovaya dusup
+    hiz sinirini TAMAMEN atlayabiliyordu.
+
+    Dogrusu: yalnizca istek guvenilen bir vekilden (ozel ag) geliyorsa XFF'e
+    bakilir ve EN SAGDAKI deger alinir; aksi halde soketin kendi adresi.
+    """
+    peer = request.client.host if request.client else "unknown"
+    if not _ozel_ip(peer):
+        return peer
+    xff = request.headers.get("x-forwarded-for", "")
+    parcalar = [p.strip() for p in xff.split(",") if p.strip()]
+    return parcalar[-1] if parcalar else peer
 
 
 def _prune_stale_ips(now: float) -> None:
@@ -129,21 +162,24 @@ def _prune_stale_ips(now: float) -> None:
     if now - _last_cleanup < 60:
         return
     _last_cleanup = now
-    for ip in list(_hits.keys()):
-        q = _hits[ip]
-        while q and now - q[0] > 60:
-            q.popleft()
-        if not q:
-            del _hits[ip]
+    for sozluk in (_hits, _auth_hits):
+        for ip in list(sozluk.keys()):
+            q = sozluk[ip]
+            while q and now - q[0] > 60:
+                q.popleft()
+            if not q:
+                del sozluk[ip]
 
 
-def check_rate_limit(client_ip: str) -> bool:
+def check_rate_limit(client_ip: str, sozluk: dict = None, tavan: int = None) -> bool:
     now = time.time()
     _prune_stale_ips(now)
-    q = _hits.setdefault(client_ip, deque())
+    sozluk = _hits if sozluk is None else sozluk
+    tavan = RATE_LIMIT_PER_MIN if tavan is None else tavan
+    q = sozluk.setdefault(client_ip, deque())
     while q and now - q[0] > 60:
         q.popleft()
-    if len(q) >= RATE_LIMIT_PER_MIN:
+    if len(q) >= tavan:
         return False
     q.append(now)
     return True
@@ -151,9 +187,13 @@ def check_rate_limit(client_ip: str) -> bool:
 
 @app.middleware("http")
 async def rate_limit_middleware(request, call_next):
-    ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (
-        request.client.host if request.client else "unknown"
-    )
+    ip = istemci_ip(request)
+    if request.url.path == "/api/auth/verify" and not check_rate_limit(
+        ip, _auth_hits, AUTH_RATE_LIMIT_PER_MIN
+    ):
+        return JSONResponse(
+            status_code=429, content={"detail": "Cok fazla dogrulama denemesi; sonra tekrar deneyin."}
+        )
     if not check_rate_limit(ip):
         return JSONResponse(status_code=429, content={"detail": "Dakikalik istek limitini astiniz."})
     return await call_next(request)
