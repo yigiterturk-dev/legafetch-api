@@ -77,6 +77,20 @@ CORPUS_MEVZUAT_FETCH_K = int(os.environ.get("CORPUS_MEVZUAT_FETCH_K", "24"))
 # madde metninde gecme oranina kucuk bir bonus eklenir (yalnizca mevzuat
 # seciminde; ictihat siralamasi saf rerank skoruyla kalir).
 MEVZUAT_KW_BOOST = float(os.environ.get("MEVZUAT_KW_BOOST", "0.6"))
+# Mevzuat maddesi cevaba ancak bu skorun USTUNDEyse girer. Olculdu 2026-09-20:
+# "garanti en iyi 2 madde" kurali alaka gozetmedigi icin iş hukuku sorgusuna
+# CMK m.61, ticaret sorgusuna TMK m.119 gibi tamamen alakasiz maddeler
+# basiyordu. -999 = esik kapali (eski davranis); olcum sonrasi gercek deger
+# env ile verilir.
+MEVZUAT_MIN_SKOR = float(os.environ.get("MEVZUAT_MIN_SKOR", "-999"))
+# Zorunlu mevzuat enjeksiyonunda yalnız reranker puanı yeterli değil:
+# ölçümde tamamen alakasız CMK m.61 yüksek ham skor (0.642) alırken sorguyla
+# hiçbir içerik sözcüğü paylaşmıyordu. En az bir anlamlı sözcük örtüşmesini
+# oranla şart koş; 0.15 değeri ölçüm setindeki en düşük doğru adayın (0.20)
+# altında kalır. Genel arama kolundan doğal biçimde gelen mevzuatı etkilemez.
+MEVZUAT_MIN_ANAHTAR_ORANI = float(
+    os.environ.get("MEVZUAT_MIN_ANAHTAR_ORANI", "0.15")
+)
 # --- Uretici katman (OpenAI) ---------------------------------------------
 # OPENAI_API_KEY tanimliysa /api/chat pasajlari modele verip gercek bir
 # yanit uretir; anahtar yoksa veya cagri hata verirse keyless extractive
@@ -539,24 +553,36 @@ def corpus_rank(query: str, k: int = None) -> list:
     # (2026-09-17): bge-reranker-base kisa kanun maddelerinde ~0 skor
     # uretip TCK Geçici-1'i TKHK'nin ustune koyabiliyor; keyword cakismasi
     # ikinci bir sinyal olarak eklenir (yalnizca mevzuat seciminde).
-    mev_skorlu = [
-        (
-            d,
-            (s if s is not None else 0.0)
-            + MEVZUAT_KW_BOOST * _anahtar_hit_orani(query, d.page_content),
+    mev_skorlu = []
+    for d, s in skorlu:
+        if d.metadata.get("tur") != "mevzuat":
+            continue
+        ham_skor = s if s is not None else 0.0
+        anahtar_orani = _anahtar_hit_orani(query, d.page_content)
+        mev_skorlu.append(
+            (d, ham_skor + MEVZUAT_KW_BOOST * anahtar_orani,
+             ham_skor, anahtar_orani)
         )
-        for d, s in skorlu
-        if d.metadata.get("tur") == "mevzuat"
-    ]
     mev_skorlu.sort(key=lambda x: x[1], reverse=True)
     # Kanun dayanagi temsili garanti: en iyi 2 FARKLI madde her cevapta yer
     # alir (içtihat maddeye ATIF yapar, maddeyi İÇERMEZ)
     mev_eniyi, gorulen_madde = [], set()
-    for d, _ in mev_skorlu:
+    for d, skor, ham_skor, anahtar_orani in mev_skorlu:
         kaynak = d.metadata.get("source", "")
+        if anahtar_orani < MEVZUAT_MIN_ANAHTAR_ORANI:
+            print(f"[mevzuat-elendi] skor={skor:.3f} ham={ham_skor:.3f} "
+                  f"hit={anahtar_orani:.3f} < hit_min={MEVZUAT_MIN_ANAHTAR_ORANI} "
+                  f":: {kaynak[:70]}", flush=True)
+            continue
+        if skor < MEVZUAT_MIN_SKOR:
+            print(f"[mevzuat-elendi] skor={skor:.3f} ham={ham_skor:.3f} "
+                  f"hit={anahtar_orani:.3f} < {MEVZUAT_MIN_SKOR} :: {kaynak[:70]}", flush=True)
+            continue
         if kaynak not in gorulen_madde:
             gorulen_madde.add(kaynak)
             mev_eniyi.append(d)
+            print(f"[mevzuat-secildi] skor={skor:.3f} ham={ham_skor:.3f} "
+                  f"hit={anahtar_orani:.3f} :: {kaynak[:70]}", flush=True)
         if len(mev_eniyi) == 2:
             break
     ictihat = [d for d, _ in skorlu if d.metadata.get("tur") != "mevzuat"]
