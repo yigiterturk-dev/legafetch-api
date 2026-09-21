@@ -82,6 +82,14 @@ def test_sgk_kazanci_kullanilinca_cekince_yazilir(client):
                for c in g["cekinceler"])
 
 
+def test_ucret_en_son_donemden_secilir_son_satirdan_degil(client):
+    """Canlı ölçümde çıkan hata: döküm tarih sırasında değilse model son
+    satırı ücret sanıyordu (423.987 yerine 70.732 TL)."""
+    g = _gonder(client, tavan="73729.87").json()
+    assert g["tespit"]["esas_alinan_ucret"] == 94195.38
+    assert round(g["senaryolar"][0]["net"]) == 423987
+
+
 def test_tavansiz_istekte_yuksek_cikma_uyarisi(client):
     g = _gonder(client).json()
     assert any("OLDUĞUNDAN YÜKSEK" in c for c in g["cekinceler"])

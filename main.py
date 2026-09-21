@@ -1980,17 +1980,27 @@ async def iscilik_hesabi(
     # ücret değildir (mesai ve tek seferlik ödemeler içinde olabilir).
     aylik = giydirilmis_aylik
     if not aylik:
-        try:
-            aylik = float(str(veri.get("son_kazanc") or "")
-                          .replace(".", "").replace(",", "."))
-        except ValueError:
-            aylik = 0.0
-        if aylik:
+        # Ücreti MODELİN "son_kazanc" alanından almıyoruz: ölçüldü, model
+        # belgedeki son satırı veriyor, en son dönemi değil. Dönemi Python
+        # seçer; modelin değeri yalnız hiç satır okunamadıysa yedek.
+        secilen = iscilik.son_kazanc_sec(satirlar)
+        if secilen:
+            aylik = secilen.kazanc
             cekinceler.append(
-                f"Giydirilmiş ücret girilmedi; dökümdeki son SGK kazancı "
-                f"({veri.get('son_kazanc')} TL, {veri.get('son_kazanc_donemi') or 'dönem?'}) "
-                "kullanıldı. SGK kazancı giydirilmiş ücretle aynı şey değildir — "
-                "fazla mesai ve tek seferlik ödemeler ayrıldığında tutar düşebilir.")
+                f"Giydirilmiş ücret girilmedi; dökümdeki en son dönemin SGK "
+                f"kazancı ({secilen.donem}: {secilen.kazanc} TL) kullanıldı. "
+                "SGK kazancı giydirilmiş ücretle aynı şey değildir — fazla mesai "
+                "ve tek seferlik ödemeler ayrıldığında tutar düşebilir.")
+        else:
+            try:
+                aylik = float(str(veri.get("son_kazanc") or "")
+                              .replace(".", "").replace(",", "."))
+            except ValueError:
+                aylik = 0.0
+            if aylik:
+                cekinceler.append(
+                    f"Döküm satırı okunamadı; belgeden çıkarılan son kazanç "
+                    f"({veri.get('son_kazanc')} TL) kullanıldı — dönemi teyit edin.")
     if not aylik:
         raise HTTPException(
             status_code=422,

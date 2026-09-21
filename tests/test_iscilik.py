@@ -93,3 +93,18 @@ def test_yillik_izin_kademeleri():
     assert i.yillik_izin_hak_gun(400) == 14
     assert i.yillik_izin_hak_gun(2115) == 20
     assert i.yillik_izin_hak_gun(365 * 16) == 26
+
+
+def test_son_kazanc_en_son_donemden_secilir():
+    """Ölçülen hata: model dökümün SON SATIRINI son kazanç sanıyordu."""
+    satirlar = i.satirlari_dogrula([
+        {"donem": "2026-07", "kazanc": "94.195,38"},
+        {"donem": "2023-07", "kazanc": "12.300,00"},
+    ], "")
+    s = i.son_kazanc_sec(satirlar)
+    assert s is not None and s.donem == "2026-07" and s.kazanc == 94195.38
+
+
+def test_donemi_okunamayan_satir_ucret_secimine_girmez():
+    satirlar = i.satirlari_dogrula([{"donem": "", "kazanc": "99.999,00"}], "")
+    assert i.son_kazanc_sec(satirlar) is None

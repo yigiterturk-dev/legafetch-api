@@ -294,3 +294,17 @@ def senaryolar(giris, cikis, giydirilmis_aylik: float, tavan: float | None,
         s = kidem_hesapla(giris, cikis, giydirilmis_aylik, tavan, dusum)
         cikti.append({"varsayim": ad, **asdict(s)})
     return cikti
+
+
+def son_kazanc_sec(satirlar: list[DokumSatiri]) -> DokumSatiri | None:
+    """En SON DÖNEMİN kazancını seçer — dökümün son satırını değil.
+
+    Ölçüldü (2026-09-21, canlı): model "son kazanç" sorulduğunda belgedeki son
+    satırı veriyor. Satırlar tarih sırasında değilse bu, fesih tarihindeki
+    ücret yerine yıllar önceki bir ücreti hesaba sokar; örnekte 423.987 TL
+    yerine 70.732 TL çıktı. Bu yüzden ücret seçimi modele bırakılmaz.
+    """
+    adaylar = [s for s in satirlar if s.kazanc > 0 and re.match(r"^\d{4}[-/]\d{2}$", s.donem or "")]
+    if not adaylar:
+        return None
+    return max(adaylar, key=lambda s: s.donem.replace("/", "-"))
