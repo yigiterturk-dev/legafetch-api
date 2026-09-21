@@ -3,6 +3,8 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { API_PROXY } from "@/lib/api";
 import Ust, { Alt } from "@/components/ust";
+import KonsolGezinti from "@/components/konsol-gezinti";
+import DosyayaKaydet from "@/components/dosyaya-kaydet";
 import Secici from "@/components/secici";
 import KaynakKarti, { Kaynak } from "@/components/kaynak-paneli";
 
@@ -219,8 +221,9 @@ export default function Home() {
   return (
     <>
       <Ust mod="uygulama" />
-      <main className="kap" style={{ paddingTop: 40 }}>
-        <h1>Hukuk külliyatında anlam tabanlı arama</h1>
+      <main className="kap" style={{ paddingTop: 32 }}>
+        <KonsolGezinti />
+        <h1 style={{ marginTop: 22 }}>Hukuk külliyatında anlam tabanlı arama</h1>
         <p className="spot" style={{ marginTop: 12 }}>
           Soruyu gündelik dille yazın; motor kelime eşleşmesine değil anlama göre
           arar, bulduğu pasajlardan atıflı bir cevap çıkarır ve kullandığı
@@ -329,11 +332,33 @@ export default function Home() {
                             </div>
                           </div>
                         )}
-                        {m.saniye !== undefined && (
-                          <p className="kucuk" style={{ marginTop: 10 }}>
-                            {m.saniye.toFixed(1)} saniyede döndü
-                          </p>
-                        )}
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 12,
+                            marginTop: 12,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <DosyayaKaydet
+                            tur="sorgu"
+                            baslik={
+                              mesajlar.find(
+                                (x, i) =>
+                                  x.kim === "kullanici" &&
+                                  mesajlar[i + 1]?.id === m.id,
+                              )?.metin ?? "Arama"
+                            }
+                            icerik={m.metin}
+                            veri={{ kaynaklar: m.kaynaklar ?? [] }}
+                          />
+                          {m.saniye !== undefined && (
+                            <span className="kucuk">
+                              {m.saniye.toFixed(1)} saniyede döndü
+                            </span>
+                          )}
+                        </div>
                       </>
                     )}
                   </div>

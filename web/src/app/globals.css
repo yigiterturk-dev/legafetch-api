@@ -497,6 +497,137 @@ h3 {
 .gecmis-oge:hover:not(:disabled) { border-color: var(--kenar-koyu); color: var(--metin); }
 .gecmis-oge:disabled { opacity: .5; cursor: not-allowed; }
 
+/* ---- konsol sekmeleri ---- */
+.sekmeler {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  margin: 20px 0 4px;
+  border-bottom: 1px solid var(--kenar);
+}
+
+.sekme {
+  padding: 9px 14px;
+  font-size: 13.5px;
+  color: var(--metin-2);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.sekme:hover { color: var(--metin); background: var(--yuzey); }
+
+.sekme-etkin {
+  color: var(--marka);
+  font-weight: 560;
+  border-bottom-color: var(--marka);
+}
+
+/* ---- form izgarasi ---- */
+.izgara {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+}
+
+.alan-etiket {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 12.5px;
+  color: var(--metin-2);
+}
+
+.metin-alani {
+  width: 100%;
+  min-height: 130px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--metin);
+  background: var(--zemin);
+  border: 1px solid var(--kenar-koyu);
+  border-radius: 8px;
+  resize: vertical;
+}
+
+.metin-alani:focus { border-color: var(--marka); outline: none; }
+
+/* ---- risk rozetleri ---- */
+.risk {
+  border: 1px solid var(--kenar);
+  border-left: 3px solid var(--kenar-koyu);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--zemin);
+}
+
+.risk-yuksek { border-left-color: #b91c1c; }
+.risk-orta { border-left-color: #b45309; }
+.risk-dusuk { border-left-color: var(--metin-3); }
+
+.risk-alinti {
+  margin-top: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-style: italic;
+  color: var(--metin-2);
+  background: var(--yuzey);
+  border-radius: 6px;
+}
+
+/* ---- dilekce onizleme ---- */
+.belge {
+  background: var(--zemin);
+  border: 1px solid var(--kenar);
+  border-radius: 10px;
+  padding: 28px 32px;
+  font-size: 14.5px;
+  line-height: 1.75;
+}
+
+.belge h4 {
+  margin: 18px 0 8px;
+  font-size: 13px;
+  letter-spacing: .04em;
+  color: var(--metin-2);
+}
+
+.belge-ortali { text-align: center; font-weight: 600; margin-bottom: 18px; }
+
+/* ---- dosya listesi ---- */
+.dosya-satir {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--kenar);
+  border-radius: 9px;
+  background: var(--zemin);
+}
+
+.dosya-satir:hover { border-color: var(--kenar-koyu); }
+
+/* ---- hesaplayici ---- */
+.sonuc-kutu {
+  background: var(--marka-yumusak);
+  border: 1px solid #d7e2ef;
+  border-radius: 9px;
+  padding: 14px 16px;
+}
+
+.sonuc-kutu b { font-size: 20px; color: var(--marka-koyu); }
+
+.satir-arasi {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 5px 0;
+  font-size: 13.5px;
+  border-bottom: 1px dashed var(--kenar);
+}
+
 /* ---- bilgi / uyari ---- */
 .uyari {
   background: var(--uyari-zemin);

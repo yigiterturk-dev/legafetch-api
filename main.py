@@ -1,7 +1,7 @@
-from fastapi import FastAPI, UploadFile, File, Security, HTTPException, status
+from fastapi import FastAPI, UploadFile, File, Security, HTTPException, status, Request
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from typing import List, Optional
 from collections import deque
@@ -27,6 +27,7 @@ import secrets
 import hashlib
 import uuid as uuidlib
 import pypdf
+import zipfile
 
 app = FastAPI(title="LegaFetch Core - Legal AI Infrastructure")
 
@@ -146,6 +147,10 @@ OPENAI_BASE_URL = os.environ.get(
     "OPENAI_BASE_URL", "https://api.openai.com/v1"
 ).strip().rstrip("/")
 OPENAI_TIMEOUT_S = int(os.environ.get("OPENAI_TIMEOUT_S", "40"))
+# Sozlesme analizinde LLM'e gonderilecek azami karakter (~12 sayfa).
+SOZLESME_AZAMI_KARAKTER = int(os.environ.get("SOZLESME_AZAMI_KARAKTER", "24000"))
+# Sozlesme analizi tek cagrida uzun metin isler; sohbetin 40 sn'si yetmez.
+SOZLESME_TIMEOUT_S = int(os.environ.get("SOZLESME_TIMEOUT_S", "120"))
 from rerank import rerank, rerank_scored, RERANK_ENABLED  # noqa: E402
 import mevzuat_bm25  # noqa: E402
 CORPUS_MAX_PER_BELGE = int(os.environ.get("CORPUS_MAX_PER_BELGE", "2"))
@@ -691,6 +696,74 @@ def sorgu_kaydet(query: str, ranked: list, sure_ms: int, llm: bool) -> None:
         print(f"[sorgu-kaydi] yazilamadi: {e}", flush=True)
 
 
+def llm_cagir(system: str, kullanici: str, azami_token: int = 700,
+              sicaklik: float = 0.2, json_modu: bool = False,
+              timeout_s: int | None = None) -> str | None:
+    """Tek noktadan OpenAI chat cagrisi. Anahtar yok / hata olursa None."""
+    if not OPENAI_API_KEY:
+        return None
+    govde = {
+        "model": OPENAI_MODEL,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": kullanici},
+        ],
+        "temperature": sicaklik,
+        "max_tokens": azami_token,
+    }
+    if json_modu:
+        govde["response_format"] = {"type": "json_object"}
+    istek = urllib.request.Request(
+        f"{OPENAI_BASE_URL}/chat/completions",
+        data=json.dumps(govde, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+        },
+        method="POST",
+    )
+    try:
+        yanit = json.loads(
+            urllib.request.urlopen(
+                istek, timeout=timeout_s or OPENAI_TIMEOUT_S
+            ).read()
+        )
+        return (yanit["choices"][0]["message"]["content"] or "").strip() or None
+    except Exception as e:
+        print(f"[llm] cagri basarisiz: {e}", flush=True)
+        return None
+
+
+def belge_metni_cikar(ad: str, ham: bytes) -> str:
+    """PDF / DOCX / duz metin dosyasindan metin cikarir.
+
+    DOCX icin ek bagimlilik yok: .docx bir zip, govde word/document.xml.
+    Etiketler soyulur, paragraf sonlari korunur."""
+    ad = (ad or "").lower()
+    if ad.endswith(".pdf"):
+        try:
+            okuyucu = pypdf.PdfReader(io.BytesIO(ham))
+            return "\n".join((sayfa.extract_text() or "") for sayfa in okuyucu.pages[:40])
+        except Exception:
+            return ""
+    if ad.endswith(".docx"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(ham)) as z:
+                xml = z.read("word/document.xml").decode("utf-8", "ignore")
+            xml = re.sub(r"</w:p>", "\n", xml)
+            xml = re.sub(r"<w:tab[^>]*/>", "\t", xml)
+            return re.sub(r"<[^>]+>", "", xml)
+        except Exception:
+            return ""
+    try:
+        return ham.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            return ham.decode("windows-1254")
+        except Exception:
+            return ""
+
+
 def llm_cevap(query: str, ranked: list) -> str | None:
     """Pasajlara dayalı OpenAI sentezi. Anahtar yok / hata olursa None —
     çağıran taraf keyless extractive kompozisyona düşer."""
@@ -1021,6 +1094,44 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
          return ChatResponse(text=f"Hata: {str(e)}", sources=[])
 
 
+class SozlesmeRisk(BaseModel):
+    madde: str = ""       # sözleşmedeki ilgili madde/cümle (alıntı)
+    bulgu: str            # ne sorunlu
+    onem: str = "orta"    # yuksek | orta | dusuk
+    dayanak: List[int] = []   # kaynak numaraları ([n])
+
+
+class SozlesmeAnaliz(BaseModel):
+    filename: str
+    status: str
+    tur: str = ""             # sözleşmenin türü (kira, iş, satış…)
+    ozet: str = ""
+    riskler: List[SozlesmeRisk] = []
+    eksikler: List[str] = []
+    analysis: str = ""        # düz metin özet (eski istemciler için)
+    karakter: int = 0
+    sources: List[SourceMetadata] = []
+    uyari: str = ""
+
+
+SOZLESME_SISTEM = (
+    "Sen Türk hukuku alanında uzman bir sözleşme denetçisisin. Sana bir "
+    "sözleşmenin metni ve külliyattan seçilmiş numaralı kanun/içtihat "
+    "pasajları verilecek.\n"
+    "Kurallar:\n"
+    "1) YALNIZCA sözleşme metnine ve verilen pasajlara dayan; pasajlarda "
+    "olmayan hukuki kural uydurma.\n"
+    "2) Riskleri sözleşmeden ALINTIYLA göster — hangi madde/cümle sorunlu.\n"
+    "3) Bir riski bir pasaj destekliyorsa numarasını 'dayanak' dizisine yaz; "
+    "destekleyen pasaj yoksa diziyi BOŞ bırak, uydurma atıf verme.\n"
+    "4) 'eksikler' sözleşmede bulunmayan ama bu tür sözleşmede beklenen "
+    "maddelerdir.\n"
+    "5) Türkçe yaz. Çıktı SADECE şu JSON: "
+    '{"tur": "...", "ozet": "...", "riskler": [{"madde": "...", "bulgu": "...", '
+    '"onem": "yuksek|orta|dusuk", "dayanak": [1,2]}], "eksikler": ["..."]}'
+)
+
+
 @app.post("/api/analyze-contract")
 async def analyze_contract(file: UploadFile = File(...), api_key: str = Security(get_api_key)):
     raw = await file.read()
@@ -1028,53 +1139,550 @@ async def analyze_contract(file: UploadFile = File(...), api_key: str = Security
         raise HTTPException(status_code=413, detail="Dosya 10 MB sınırını aşıyor.")
     STATS["contract"] += 1
 
-    # Gercel PDF metni + yasal pasajlarla semantic carpistirma
-    text = ""
-    if (file.filename or "").lower().endswith(".pdf"):
-        try:
-            reader = pypdf.PdfReader(io.BytesIO(raw))
-            text = "\n".join((page.extract_text() or "") for page in reader.pages[:10])
-        except Exception:
-            text = ""
+    metin = belge_metni_cikar(file.filename or "", raw).strip()
+    if len(metin) < 200:
+        return SozlesmeAnaliz(
+            filename=file.filename or "",
+            status="bos",
+            analysis=(
+                "Belgeden okunabilir metin çıkarılamadı. Taranmış (görüntü) PDF "
+                "ise metin katmanı yok — OCR'lı bir sürüm yükleyin."
+            ),
+            karakter=len(metin),
+        )
 
-    query = text[:500] or f"{file.filename} sözleşme"
-    if REMOTE_MODE:
-        aday = corpus_search(query, max(3, CORPUS_FETCH_K))
-        docs = rerank(query, aday, 3)
-    else:
-        docs = vector_store.as_retriever(search_kwargs={"k": 2}).invoke(query)
+    # Arama sorgusu: sözleşmenin BAŞI (taraflar/konu) + türünü ele veren
+    # başlık. Tüm metni gömmek gürültü: 40 sayfalık metnin vektörü hiçbir
+    # şeye yakın değil.
+    sorgu = re.sub(r"\s+", " ", metin[:800])
+    docs = corpus_rank(sorgu) if REMOTE_MODE else \
+        vector_store.as_retriever(search_kwargs={"k": 3}).invoke(sorgu)
 
     sources_meta = [
-        {
-            "source": d.metadata.get("source", "Bilinmeyen"),
-            "authority_score": d.metadata.get("authority_score", 50),
-            "jurisdiction": d.metadata.get("jurisdiction", "Global"),
-            "metin": (d.page_content or "")[:4000],
-            "tarih": d.metadata.get("tarih", ""),
-            "daire": d.metadata.get("daire", ""),
-            "esasNo": d.metadata.get("esasNo", ""),
-            "kararNo": d.metadata.get("kararNo", ""),
-            "kurum": d.metadata.get("kurum", ""),
-            "belgeSinifi": d.metadata.get("belgeSinifi", ""),
-            "docId": d.metadata.get("docId", ""),
-        }
+        SourceMetadata(
+            source=d.metadata.get("source", "Bilinmeyen"),
+            authority_score=d.metadata.get("authority_score", 50),
+            jurisdiction=d.metadata.get("jurisdiction", "Global"),
+            metin=(d.page_content or "")[:4000],
+            tarih=d.metadata.get("tarih", ""),
+            daire=d.metadata.get("daire", ""),
+            esasNo=d.metadata.get("esasNo", ""),
+            kararNo=d.metadata.get("kararNo", ""),
+            kurum=d.metadata.get("kurum", ""),
+            belgeSinifi=d.metadata.get("belgeSinifi", ""),
+            docId=d.metadata.get("docId", ""),
+        )
         for d in docs
     ]
 
-    if docs:
-        analysis = (
-            "Sözleşme metni yürürlükteki mevzuatla karşılaştırıldı. "
-            f"En alakalı hukuki referans: {docs[0].page_content}"
-        )
-    else:
-        analysis = "Sözleşme metninde eşleşen yasa maddesi bulunamadı."
+    pasajlar = "\n\n".join(
+        f"[{i}] (Kaynak: {d.metadata.get('source', 'Bilinmeyen')})\n"
+        f"{(d.page_content or '')[:900]}"
+        for i, d in enumerate(docs, start=1)
+    )
+    # Sözleşme metni kırpılır: gpt-4o-mini bağlamı bol ama maliyet metinle
+    # doğrusal artıyor; 24.000 karakter ~ 12 sayfa, tipik sözleşmeyi kapsıyor.
+    kirpildi = len(metin) > SOZLESME_AZAMI_KARAKTER
+    govde = metin[:SOZLESME_AZAMI_KARAKTER]
+    ham = llm_cagir(
+        SOZLESME_SISTEM,
+        f"SÖZLEŞME METNİ:\n{govde}\n\nPASAJLAR:\n{pasajlar or '(pasaj yok)'}",
+        azami_token=1600,
+        json_modu=True,
+        timeout_s=SOZLESME_TIMEOUT_S,
+    )
 
+    if not ham:
+        # Anahtar yok / çağrı düştü: uydurma analiz üretme, açıkça söyle.
+        return SozlesmeAnaliz(
+            filename=file.filename or "",
+            status="llm-yok",
+            karakter=len(metin),
+            sources=sources_meta,
+            analysis=(
+                "Belge okundu ancak analiz katmanı şu an çalışmıyor "
+                "(dil modeli yanıt vermedi). Aşağıda yalnızca sözleşmenin "
+                "konusuyla eşleşen mevzuat/içtihat pasajları listelenmiştir."
+            ),
+        )
+
+    try:
+        veri = json.loads(ham)
+    except json.JSONDecodeError:
+        veri = {"ozet": ham, "riskler": [], "eksikler": []}
+
+    riskler = []
+    for r in (veri.get("riskler") or [])[:20]:
+        if not isinstance(r, dict):
+            continue
+        dayanak = [
+            n for n in (r.get("dayanak") or [])
+            if isinstance(n, int) and 1 <= n <= len(sources_meta)
+        ]
+        riskler.append(
+            SozlesmeRisk(
+                madde=str(r.get("madde", ""))[:600],
+                bulgu=str(r.get("bulgu", ""))[:800],
+                onem=str(r.get("onem", "orta")).lower(),
+                dayanak=dayanak,
+            )
+        )
+
+    ozet = str(veri.get("ozet", ""))[:1500]
+    eksikler = [str(e)[:300] for e in (veri.get("eksikler") or [])[:15]]
+    duz = ozet
+    if riskler:
+        duz += "\n\nRiskli görülen noktalar:\n" + "\n".join(
+            f"- {r.bulgu}" for r in riskler
+        )
+
+    return SozlesmeAnaliz(
+        filename=file.filename or "",
+        status="success",
+        tur=str(veri.get("tur", ""))[:120],
+        ozet=ozet,
+        riskler=riskler,
+        eksikler=eksikler,
+        analysis=duz,
+        karakter=len(metin),
+        sources=sources_meta,
+        uyari=(
+            "Sözleşmenin ilk ~12 sayfası incelendi; gerisi analize girmedi."
+            if kirpildi else ""
+        ),
+    )
+
+
+# --- DILEKCE URETIMI (2026-09-21) --------------------------------------
+# Rakiplerin asil sattigi sey arama degil, belge uretimi. Hat sohbetle ayni:
+# once korpustan dayanak cek, sonra YALNIZ o dayanaklarla yazdir. Fark,
+# ciktinin serbest metin degil yapili bir dilekce olmasi — kullanici
+# duzeltip Word olarak indirebilsin diye alanlar ayri doner.
+
+DILEKCE_TURLERI = {
+    "dava": "dava dilekçesi (HMK m.119 unsurlarıyla)",
+    "cevap": "cevap dilekçesi (HMK m.129 unsurlarıyla)",
+    "cevaba-cevap": "cevaba cevap (replik) dilekçesi",
+    "istinaf": "istinaf başvuru dilekçesi (HMK m.342)",
+    "temyiz": "temyiz dilekçesi",
+    "itiraz-iptali": "itirazın iptali davası dilekçesi (İİK m.67)",
+    "ihtarname": "noter ihtarnamesi",
+    "sikayet": "savcılığa suç duyurusu / şikâyet dilekçesi",
+    "cevap-idari": "idari dava (iptal) dilekçesi (İYUK m.3)",
+    "beyan": "beyan dilekçesi",
+}
+
+
+class DilekceRequest(BaseModel):
+    tur: str = "dava"
+    olay: str                       # kullanıcının anlattığı maddi olay
+    mahkeme: Optional[str] = ""     # "İstanbul 3. Asliye Hukuk Mahkemesi"
+    davaci: Optional[str] = ""
+    davali: Optional[str] = ""
+    talep: Optional[str] = ""       # istenen sonuç
+    dosya_no: Optional[str] = ""
+    ek_notlar: Optional[str] = ""
+
+
+class Dilekce(BaseModel):
+    tur: str
+    baslik: str = ""
+    mahkeme: str = ""
+    taraflar: str = ""
+    konu: str = ""
+    aciklamalar: List[str] = []
+    hukuki_sebepler: List[str] = []
+    deliller: List[str] = []
+    sonuc: str = ""
+    sources: List[SourceMetadata] = []
+    uyari: str = ""
+
+
+DILEKCE_SISTEM = (
+    "Sen Türk hukukunda deneyimli bir avukatsın ve dilekçe yazıyorsun. Sana "
+    "dilekçe türü, maddi olay ve külliyattan seçilmiş numaralı kanun/içtihat "
+    "pasajları verilecek.\n"
+    "Kurallar:\n"
+    "1) Hukuki dayanağı YALNIZCA verilen pasajlardan al. Pasajlarda olmayan "
+    "madde numarası, karar veya kural YAZMA.\n"
+    "2) 'aciklamalar' maddi olayın numaralı anlatımıdır; dayanağa atıf "
+    "yaparken [n] biçimini kullan.\n"
+    "3) 'hukuki_sebepler' yalnızca pasajlarda geçen mevzuattan oluşur; "
+    "pasajlarda kanun metni yoksa 'İlgili mevzuat' yazıp geç, uydurma.\n"
+    "4) Kullanıcının vermediği isim, tarih, tutar, dosya numarası UYDURMA — "
+    "eksikse '[...]' köşeli parantezli boşluk bırak.\n"
+    "5) Türkçe, resmî dilekçe üslubu. Çıktı SADECE şu JSON: "
+    '{"baslik": "...", "konu": "...", "aciklamalar": ["..."], '
+    '"hukuki_sebepler": ["..."], "deliller": ["..."], "sonuc": "..."}'
+)
+
+
+@app.post("/api/dilekce", response_model=Dilekce)
+async def dilekce_uret(request: DilekceRequest, api_key: str = Security(get_api_key)):
+    STATS["dilekce"] = STATS.get("dilekce", 0) + 1
+    tur_adi = DILEKCE_TURLERI.get(request.tur, DILEKCE_TURLERI["dava"])
+
+    # Dayanak aramasi: olay + talep. Dilekce turu sorguya girmez (usul
+    # kelimeleri korpusta her yerde geciyor, gurultu yapiyor).
+    sorgu = " ".join(x for x in [request.olay, request.talep or ""] if x)[:1200]
+    docs = corpus_rank(sorgu) if REMOTE_MODE else \
+        vector_store.as_retriever(search_kwargs={"k": 3}).invoke(sorgu)
+
+    sources_meta = [
+        SourceMetadata(
+            source=d.metadata.get("source", "Bilinmeyen"),
+            authority_score=d.metadata.get("authority_score", 50),
+            jurisdiction=d.metadata.get("jurisdiction", "Global"),
+            metin=(d.page_content or "")[:4000],
+            tarih=d.metadata.get("tarih", ""),
+            daire=d.metadata.get("daire", ""),
+            esasNo=d.metadata.get("esasNo", ""),
+            kararNo=d.metadata.get("kararNo", ""),
+            kurum=d.metadata.get("kurum", ""),
+            belgeSinifi=d.metadata.get("belgeSinifi", ""),
+            docId=d.metadata.get("docId", ""),
+        )
+        for d in docs
+    ]
+    pasajlar = "\n\n".join(
+        f"[{i}] (Kaynak: {d.metadata.get('source', 'Bilinmeyen')})\n"
+        f"{(d.page_content or '')[:900]}"
+        for i, d in enumerate(docs, start=1)
+    )
+
+    taraflar = []
+    if request.davaci:
+        taraflar.append(f"DAVACI: {request.davaci}")
+    if request.davali:
+        taraflar.append(f"DAVALI: {request.davali}")
+
+    kullanici = (
+        f"DİLEKÇE TÜRÜ: {tur_adi}\n"
+        f"MAHKEME/MERCİ: {request.mahkeme or '[...]'}\n"
+        f"DOSYA NO: {request.dosya_no or '[...]'}\n"
+        f"TARAFLAR: {'; '.join(taraflar) or '[...]'}\n"
+        f"TALEP: {request.talep or '(belirtilmedi)'}\n"
+        f"EK NOTLAR: {request.ek_notlar or '-'}\n\n"
+        f"MADDİ OLAY:\n{request.olay}\n\n"
+        f"PASAJLAR:\n{pasajlar or '(pasaj yok)'}"
+    )
+    ham = llm_cagir(
+        DILEKCE_SISTEM, kullanici,
+        azami_token=2200, sicaklik=0.3, json_modu=True,
+        timeout_s=SOZLESME_TIMEOUT_S,
+    )
+    if not ham:
+        return Dilekce(
+            tur=request.tur,
+            sources=sources_meta,
+            uyari=(
+                "Dilekçe üretilemedi: dil modeli yanıt vermedi. Aşağıdaki "
+                "pasajlar olayla eşleşen dayanaklardır."
+            ),
+        )
+    try:
+        veri = json.loads(ham)
+    except json.JSONDecodeError:
+        veri = {"konu": "", "aciklamalar": [ham], "hukuki_sebepler": [], "deliller": [], "sonuc": ""}
+
+    def liste(ad, sinir=25, uzunluk=1200):
+        return [str(x)[:uzunluk] for x in (veri.get(ad) or [])[:sinir] if str(x).strip()]
+
+    return Dilekce(
+        tur=request.tur,
+        baslik=str(veri.get("baslik", ""))[:200],
+        mahkeme=request.mahkeme or "",
+        taraflar="\n".join(taraflar),
+        konu=str(veri.get("konu", ""))[:600],
+        aciklamalar=liste("aciklamalar"),
+        hukuki_sebepler=liste("hukuki_sebepler", 20, 300),
+        deliller=liste("deliller", 20, 300),
+        sonuc=str(veri.get("sonuc", ""))[:1500],
+        sources=sources_meta,
+        uyari=(
+            "Taslaktır. Dayanaklar aşağıdaki pasajlardan üretildi; imzalamadan "
+            "önce her atfı kaynağından doğrulayın."
+        ),
+    )
+
+
+# --- .docx URETIMI (bagimliliksiz) -------------------------------------
+# python-docx eklemedik: .docx bir zip + birkac XML. Tek bir sablondan
+# paragraf uretmek 60 satir; imaja 9,9 GB'lik yiginin ustune yeni bagimlilik
+# bindirmeye degmez.
+def _xml_kacis(m: str) -> str:
+    return (
+        (m or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    )
+
+
+def docx_yap(paragraflar: list) -> bytes:
+    """paragraflar: [(metin, stil)] — stil: 'baslik' | 'ortali' | 'kalin' | ''."""
+    govde = []
+    for metin, stil in paragraflar:
+        hizala = '<w:jc w:val="center"/>' if stil in ("baslik", "ortali") else ""
+        kalin = "<w:b/>" if stil in ("baslik", "kalin") else ""
+        boyut = '<w:sz w:val="28"/>' if stil == "baslik" else '<w:sz w:val="22"/>'
+        govde.append(
+            "<w:p><w:pPr>"
+            f"{hizala}<w:spacing w:after=\"120\"/>"
+            f"<w:rPr>{kalin}{boyut}</w:rPr>"
+            "</w:pPr>"
+            f"<w:r><w:rPr>{kalin}{boyut}</w:rPr>"
+            f'<w:t xml:space="preserve">{_xml_kacis(metin)}</w:t></w:r></w:p>'
+        )
+    document = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f'<w:body>{"".join(govde)}</w:body></w:document>'
+    )
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        "</Types>"
+    )
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+        "</Relationships>"
+    )
+    tampon = io.BytesIO()
+    with zipfile.ZipFile(tampon, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", content_types)
+        z.writestr("_rels/.rels", rels)
+        z.writestr("word/document.xml", document)
+    return tampon.getvalue()
+
+
+def dilekce_paragraflari(d: Dilekce) -> list:
+    p = []
+    if d.mahkeme:
+        p.append((d.mahkeme.upper() + "'NE", "baslik"))
+    elif d.baslik:
+        p.append((d.baslik.upper(), "baslik"))
+    p.append(("", ""))
+    for satir in (d.taraflar or "").split("\n"):
+        if satir.strip():
+            p.append((satir, ""))
+    if d.konu:
+        p.append(("KONU: " + d.konu, ""))
+    p.append(("", ""))
+    if d.aciklamalar:
+        p.append(("AÇIKLAMALAR", "kalin"))
+        for i, a in enumerate(d.aciklamalar, start=1):
+            p.append((f"{i}. {a}", ""))
+        p.append(("", ""))
+    if d.hukuki_sebepler:
+        p.append(("HUKUKİ SEBEPLER", "kalin"))
+        p.append(("; ".join(d.hukuki_sebepler), ""))
+        p.append(("", ""))
+    if d.deliller:
+        p.append(("DELİLLER", "kalin"))
+        p.append(("; ".join(d.deliller), ""))
+        p.append(("", ""))
+    if d.sonuc:
+        p.append(("SONUÇ VE İSTEM", "kalin"))
+        p.append((d.sonuc, ""))
+    p.append(("", ""))
+    if d.sources:
+        p.append(("KULLANILAN KAYNAKLAR", "kalin"))
+        for i, k in enumerate(d.sources, start=1):
+            p.append((f"[{i}] {k.source}", ""))
+    return p
+
+
+@app.post("/api/dilekce/docx")
+async def dilekce_docx(d: Dilekce, api_key: str = Security(get_api_key)):
+    """Duzenlenmis dilekceyi Word dosyasina cevirir. Istemci metni degistirmis
+    olabilir; sunucu yeniden uretmez, GELENI yazar."""
+    icerik = docx_yap(dilekce_paragraflari(d))
+    ad = f"dilekce-{d.tur or 'taslak'}.docx"
+    return Response(
+        content=icerik,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{ad}"'},
+    )
+
+
+# --- DOSYA / PROJE ALANI (2026-09-21) ----------------------------------
+# Avukat tek sorgu sormuyor; bir DOSYA uzerinde calisiyor. Aramalar, uretilen
+# dilekceler ve sozlesme analizleri o dosyanin altinda birikmeli.
+#
+# Depo: SQLite, /app/loglar altinda (compose'da ./api/loglar olarak host'a
+# baglanmis tek kalici dizin — konteyner yeniden yaratilinca kaybolmaz).
+# localStorage KULLANILMADI: tarayici temizlenince musterinin dosyasi ucar,
+# bu bir hukuk urununde kabul edilemez.
+#
+# ⚠️ Kullanici kimligi web katmanindan `X-Kullanici` basligiyla gelir (lisans
+# anahtarinin SHA-256'si). API'yi dogrudan API anahtariyla cagiran biri baska
+# bir kullaniciyi taklit edebilir; ayrim musteri izolasyonu icin degil, ayni
+# kurulumdaki kullanicilarin dosyalarini ayirmak icin. Gercek izolasyon
+# gerekirse anahtar basina ayri API anahtari sart.
+import sqlite3
+
+DOSYA_DB = os.environ.get("DOSYA_DB", "/app/loglar/dosyalar.db")
+
+
+def db_ac() -> sqlite3.Connection:
+    os.makedirs(os.path.dirname(DOSYA_DB), exist_ok=True)
+    baglanti = sqlite3.connect(DOSYA_DB, timeout=10)
+    baglanti.row_factory = sqlite3.Row
+    baglanti.execute("PRAGMA journal_mode=WAL")
+    baglanti.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS dosyalar (
+            id TEXT PRIMARY KEY,
+            kullanici TEXT NOT NULL,
+            ad TEXT NOT NULL,
+            aciklama TEXT DEFAULT '',
+            olusturma TEXT NOT NULL,
+            guncelleme TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS kayitlar (
+            id TEXT PRIMARY KEY,
+            dosya_id TEXT NOT NULL,
+            tur TEXT NOT NULL,
+            baslik TEXT DEFAULT '',
+            icerik TEXT DEFAULT '',
+            veri TEXT DEFAULT '',
+            olusturma TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_dosya_kullanici ON dosyalar(kullanici);
+        CREATE INDEX IF NOT EXISTS ix_kayit_dosya ON kayitlar(dosya_id);
+        """
+    )
+    return baglanti
+
+
+def kullanici_kimligi(request: Request) -> str:
+    """Web katmani lisans anahtarinin SHA-256'sini yollar. Yoksa 'ortak'
+    havuzuna dusulur (eski istemciler kirilmasin)."""
+    ham = (request.headers.get("X-Kullanici") or "").strip()
+    return re.sub(r"[^a-zA-Z0-9_-]", "", ham)[:64] or "ortak"
+
+
+def _simdi() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+class DosyaRequest(BaseModel):
+    ad: str
+    aciklama: Optional[str] = ""
+
+
+class KayitRequest(BaseModel):
+    tur: str = "not"          # not | sorgu | dilekce | analiz
+    baslik: Optional[str] = ""
+    icerik: Optional[str] = ""
+    veri: Optional[dict] = None   # yapılı içerik (dilekçe/analiz JSON'u)
+
+
+@app.get("/api/dosyalar")
+async def dosyalari_listele(request: Request, api_key: str = Security(get_api_key)):
+    kim = kullanici_kimligi(request)
+    with db_ac() as b:
+        satirlar = b.execute(
+            "SELECT d.*, (SELECT COUNT(*) FROM kayitlar k WHERE k.dosya_id = d.id) AS kayit "
+            "FROM dosyalar d WHERE kullanici = ? ORDER BY guncelleme DESC LIMIT 200",
+            (kim,),
+        ).fetchall()
+    return {"dosyalar": [dict(r) for r in satirlar]}
+
+
+@app.post("/api/dosyalar")
+async def dosya_olustur(govde: DosyaRequest, request: Request,
+                        api_key: str = Security(get_api_key)):
+    ad = (govde.ad or "").strip()[:200]
+    if not ad:
+        raise HTTPException(status_code=400, detail="Dosya adı boş olamaz.")
+    kim, kimlik, t = kullanici_kimligi(request), uuidlib.uuid4().hex, _simdi()
+    with db_ac() as b:
+        b.execute(
+            "INSERT INTO dosyalar (id, kullanici, ad, aciklama, olusturma, guncelleme) "
+            "VALUES (?,?,?,?,?,?)",
+            (kimlik, kim, ad, (govde.aciklama or "")[:1000], t, t),
+        )
+    return {"id": kimlik, "ad": ad}
+
+
+@app.get("/api/dosyalar/{dosya_id}")
+async def dosya_getir(dosya_id: str, request: Request,
+                      api_key: str = Security(get_api_key)):
+    kim = kullanici_kimligi(request)
+    with db_ac() as b:
+        d = b.execute(
+            "SELECT * FROM dosyalar WHERE id = ? AND kullanici = ?", (dosya_id, kim)
+        ).fetchone()
+        if not d:
+            raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+        kayitlar = b.execute(
+            "SELECT * FROM kayitlar WHERE dosya_id = ? ORDER BY olusturma DESC LIMIT 500",
+            (dosya_id,),
+        ).fetchall()
     return {
-        "filename": file.filename,
-        "status": "success",
-        "analysis": analysis,
-        "sources": sources_meta,
+        "dosya": dict(d),
+        "kayitlar": [
+            {**dict(k), "veri": json.loads(k["veri"]) if k["veri"] else None}
+            for k in kayitlar
+        ],
     }
+
+
+@app.post("/api/dosyalar/{dosya_id}/kayit")
+async def kayit_ekle(dosya_id: str, govde: KayitRequest, request: Request,
+                     api_key: str = Security(get_api_key)):
+    kim = kullanici_kimligi(request)
+    with db_ac() as b:
+        sahip = b.execute(
+            "SELECT 1 FROM dosyalar WHERE id = ? AND kullanici = ?", (dosya_id, kim)
+        ).fetchone()
+        if not sahip:
+            raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+        kimlik, t = uuidlib.uuid4().hex, _simdi()
+        b.execute(
+            "INSERT INTO kayitlar (id, dosya_id, tur, baslik, icerik, veri, olusturma) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (
+                kimlik, dosya_id, (govde.tur or "not")[:20],
+                (govde.baslik or "")[:300], (govde.icerik or "")[:200000],
+                json.dumps(govde.veri, ensure_ascii=False) if govde.veri else "",
+                t,
+            ),
+        )
+        b.execute("UPDATE dosyalar SET guncelleme = ? WHERE id = ?", (t, dosya_id))
+    return {"id": kimlik}
+
+
+@app.delete("/api/dosyalar/{dosya_id}/kayit/{kayit_id}")
+async def kayit_sil(dosya_id: str, kayit_id: str, request: Request,
+                    api_key: str = Security(get_api_key)):
+    kim = kullanici_kimligi(request)
+    with db_ac() as b:
+        sahip = b.execute(
+            "SELECT 1 FROM dosyalar WHERE id = ? AND kullanici = ?", (dosya_id, kim)
+        ).fetchone()
+        if not sahip:
+            raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+        b.execute("DELETE FROM kayitlar WHERE id = ? AND dosya_id = ?", (kayit_id, dosya_id))
+    return {"silindi": True}
+
+
+@app.delete("/api/dosyalar/{dosya_id}")
+async def dosya_sil(dosya_id: str, request: Request,
+                    api_key: str = Security(get_api_key)):
+    kim = kullanici_kimligi(request)
+    with db_ac() as b:
+        n = b.execute(
+            "DELETE FROM dosyalar WHERE id = ? AND kullanici = ?", (dosya_id, kim)
+        ).rowcount
+        if not n:
+            raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+        b.execute("DELETE FROM kayitlar WHERE dosya_id = ?", (dosya_id,))
+    return {"silindi": True}
 
 
 @app.get("/api/admin/stats")

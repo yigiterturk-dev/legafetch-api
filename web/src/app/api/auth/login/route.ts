@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BACKEND, getApiKey } from "@/lib/backend";
-import { createSessionToken } from "@/lib/session";
+import { createSessionToken, kullaniciKimligi } from "@/lib/session";
 import { lisansDogrula, tanimliLisanslar } from "@/lib/lisans";
 
 // Basit deneme sınırı: IP başına dakikada 10. Tek örnek çalıştığı için bellekte tutmak yeterli.
@@ -35,12 +35,15 @@ export async function POST(req: NextRequest) {
   }
 
   const lisanslar = tanimliLisanslar();
+  let kim: string | undefined;
 
   if (lisanslar.length > 0) {
     // LGF-XXXX-XXXX-XXXX biçimindeki insan anahtarı burada doğrulanır.
     const bulunan = lisansDogrula(license);
     if (!bulunan) return NextResponse.json({ ok: false }, { status: 401 });
     console.log(`[giris] lisans=${bulunan.etiket}`);
+    // Dosya/proje kayıtları bu özete bağlanır (bkz. lib/session.ts).
+    kim = await kullaniciKimligi(bulunan.anahtar);
   } else {
     // LISANS_ANAHTARLARI tanımlanmadıysa eski davranış: API anahtarını kabul et.
     let r: Response;
@@ -58,10 +61,11 @@ export async function POST(req: NextRequest) {
       );
     }
     if (!r.ok) return NextResponse.json({ ok: false }, { status: 401 });
+    kim = await kullaniciKimligi(license);
   }
 
   const res = NextResponse.json({ ok: true });
-  res.cookies.set("insure_session", await createSessionToken(), {
+  res.cookies.set("insure_session", await createSessionToken(kim), {
     httpOnly: true,
     sameSite: "lax",
     path: "/",

@@ -1,12 +1,22 @@
 import type { NextRequest } from "next/server";
 
 import { BACKEND, getApiKey } from "@/lib/backend";
+import { oturumKimligi } from "@/lib/session";
 
 const BACKEND_TIMEOUT_MS = 60_000;
+// Dilekçe ve sözleşme denetimi tek çağrıda uzun metin işler: arama (~12 sn)
+// + LLM (120 sn'ye kadar). 60 sn'lik sohbet sınırı bunları ortasında keser,
+// kullanıcı sebepsiz bir hata görürdü.
+const UZUN_UCLAR = ["dilekce", "analyze-contract"];
+const UZUN_TIMEOUT_MS = 180_000;
 
-async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number = BACKEND_TIMEOUT_MS,
+): Promise<Response> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), BACKEND_TIMEOUT_MS);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     return await fetch(url, { ...init, signal: ctrl.signal });
   } finally {
@@ -25,7 +35,14 @@ async function forward(req: NextRequest, path: string[]): Promise<Response> {
   // olduğu gibi geçirilir; API en sağdaki (güvenilen) değeri kullanır.
   const xff = req.headers.get("x-forwarded-for");
   if (xff) headers.set("x-forwarded-for", xff);
+  // Dosya/proje alanı kayıtları kullanıcıya bağlar. Kimlik İMZALI oturumdan
+  // çıkarılır — istemcinin gönderdiği başlığa güvenilmez, o yüzden burada
+  // hem okunur hem (varsa) üzerine yazılır.
+  headers.delete("x-kullanici");
+  const kim = await oturumKimligi(req.cookies.get("insure_session")?.value);
+  if (kim) headers.set("x-kullanici", kim);
 
+  const sure = UZUN_UCLAR.includes(path[0] ?? "") ? UZUN_TIMEOUT_MS : BACKEND_TIMEOUT_MS;
   let backendRes: Response;
   try {
     backendRes = await fetchWithTimeout(url, {
@@ -33,7 +50,7 @@ async function forward(req: NextRequest, path: string[]): Promise<Response> {
     headers,
     body: req.method === "GET" || req.method === "HEAD" ? undefined : await req.arrayBuffer(),
     cache: "no-store",
-    });
+    }, sure);
   } catch {
     return Response.json(
       { detail: "AI motoruna erisilemedi; servis kapabilir." },
@@ -45,6 +62,9 @@ async function forward(req: NextRequest, path: string[]): Promise<Response> {
   const outHeaders = new Headers();
   const bct = backendRes.headers.get("content-type");
   if (bct) outHeaders.set("content-type", bct);
+  // Word indirmesi için dosya adı başlığı istemciye geçmeli.
+  const bcd = backendRes.headers.get("content-disposition");
+  if (bcd) outHeaders.set("content-disposition", bcd);
   return new Response(buf, { status: backendRes.status, headers: outHeaders });
 }
 

@@ -36,9 +36,26 @@ function ctEqual(a: Uint8Array, b: Uint8Array): boolean {
   return diff === 0;
 }
 
-export async function createSessionToken(): Promise<string> {
+/**
+ * Oturum artık kimlik de taşır: `kim` = lisans anahtarının SHA-256'sı.
+ * Dosya/proje alanı bunu kullanarak kayıtları kullanıcıya bağlar. Anahtarın
+ * kendisi çereze YAZILMAZ — özet yeterli, sızarsa anahtar ele geçmez.
+ */
+export async function kullaniciKimligi(lisansAnahtari: string): Promise<string> {
+  const ozet = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(lisansAnahtari)
+  );
+  return Array.from(new Uint8Array(ozet).slice(0, 16))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+export async function createSessionToken(kim?: string): Promise<string> {
   const payload = b64urlEncode(
-    new TextEncoder().encode(JSON.stringify({ exp: Date.now() + SESSION_TTL_MS }))
+    new TextEncoder().encode(
+      JSON.stringify({ exp: Date.now() + SESSION_TTL_MS, ...(kim ? { kim } : {}) })
+    )
   );
   const mac = await crypto.subtle.sign("HMAC", await hmacKey(), new TextEncoder().encode(payload));
   return `${payload}.${b64urlEncode(new Uint8Array(mac))}`;
@@ -59,5 +76,17 @@ export async function verifySessionToken(token: string | undefined | null): Prom
     return typeof data.exp === "number" && Date.now() < data.exp;
   } catch {
     return false;
+  }
+}
+
+/** Geçerli oturumun kimlik özetini döndürür; imza tutmuyorsa null. */
+export async function oturumKimligi(token: string | undefined | null): Promise<string | null> {
+  if (!token || !(await verifySessionToken(token))) return null;
+  try {
+    const payload = token.slice(0, token.lastIndexOf("."));
+    const data = JSON.parse(new TextDecoder().decode(b64urlDecode(payload))) as { kim?: string };
+    return typeof data.kim === "string" && data.kim ? data.kim : null;
+  } catch {
+    return null;
   }
 }
