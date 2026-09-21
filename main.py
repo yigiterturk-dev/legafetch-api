@@ -1454,6 +1454,13 @@ def docx_yap(paragraflar: list) -> bytes:
     with zipfile.ZipFile(tampon, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", content_types)
         z.writestr("_rels/.rels", rels)
+        # Word bazi surumlerde govdenin kendi iliski parcasini arar; bos da
+        # olsa bulunmazsa "onarilmasi gerekiyor" uyarisi veriyor.
+        z.writestr(
+            "word/_rels/document.xml.rels",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>',
+        )
         z.writestr("word/document.xml", document)
     return tampon.getvalue()
 

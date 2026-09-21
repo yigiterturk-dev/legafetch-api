@@ -167,57 +167,6 @@ export default function Home() {
     setCalisiyor(false);
   };
 
-  const dosyaYukle = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const dosya = e.target.files?.[0];
-    if (!dosya || calisiyor) return;
-    e.target.value = "";
-
-    setCalisiyor(true);
-    const bekleyenId = crypto.randomUUID();
-    setMesajlar((o) => [
-      ...o,
-      {
-        id: crypto.randomUUID(),
-        kim: "kullanici",
-        metin: `Belge: ${dosya.name} — metinde geçen konuların mevzuat karşılığı aranıyor.`,
-      },
-      { id: bekleyenId, kim: "sistem", metin: "", bekliyor: true },
-    ]);
-
-    const form = new FormData();
-    form.append("file", dosya);
-    const baslangic = performance.now();
-    try {
-      const yanit = await fetch(`${API_PROXY}/analyze-contract`, {
-        method: "POST",
-        body: form,
-      });
-      const veri = await yanit.json();
-      setMesajlar((o) =>
-        o.map((m) =>
-          m.id === bekleyenId
-            ? {
-                id: bekleyenId,
-                kim: "sistem",
-                metin: veri.analysis || "Belgeden metin çıkarılamadı.",
-                kaynaklar: veri.sources || [],
-                saniye: (performance.now() - baslangic) / 1000,
-              }
-            : m,
-        ),
-      );
-    } catch {
-      setMesajlar((o) =>
-        o.map((m) =>
-          m.id === bekleyenId
-            ? { id: bekleyenId, kim: "sistem", metin: "Belge gönderilemedi." }
-            : m,
-        ),
-      );
-    }
-    setCalisiyor(false);
-  };
-
   return (
     <>
       <Ust mod="uygulama" />
@@ -414,20 +363,6 @@ export default function Home() {
                 placeholder="Sorunuzu yazın…"
                 disabled={calisiyor}
               />
-              <label
-                className="dugme dugme-sade"
-                style={{ cursor: calisiyor ? "not-allowed" : "pointer" }}
-                title="PDF veya metin dosyası yükleyin; ilk 10 sayfadaki konulara karşılık gelen mevzuat aranır."
-              >
-                <input
-                  type="file"
-                  hidden
-                  accept=".pdf,.txt,.doc,.docx"
-                  onChange={dosyaYukle}
-                  disabled={calisiyor}
-                />
-                Belge yükle
-              </label>
               <button type="submit" className="dugme dugme-ana" disabled={calisiyor || !girdi.trim()}>
                 Ara
               </button>
