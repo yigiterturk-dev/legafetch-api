@@ -28,7 +28,7 @@ const NEDEN = [
 const SINIRLAR = [
   "Külliyat ağırlıklı olarak içtihattır; mevzuat tarafı 73 kanunla sınırlıdır — yönetmelik ve tebliğler henüz yok.",
   "Cevabı bir dil modeli yazar. Yalnızca bulunan pasajlara dayanması istenir ama bu garanti değildir; atıfları açıp okuyun.",
-  "Sorgunuz ve eşleşen pasajlar, cevabı yazdırmak için OpenAI'ye gönderilir. Yüklediğiniz belgeler gönderilmez.",
+  "Sorgunuz ve eşleşen pasajlar OpenAI'ye (gpt-4o-mini) gönderilir. Sözleşme denetiminde YÜKLEDİĞİNİZ SÖZLEŞMENİN METNİ, dilekçe üretiminde ANLATTIĞINIZ MADDİ OLAY da gönderilir. Müvekkil adı, TCKN, dosya numarası gibi tanıtıcı bilgileri metinden çıkarın.",
   "Motor hukuki görüş üretmez. Çıkan sonucun olayınıza uygunluğunu siz değerlendirirsiniz.",
   "Kararların güncelliği hasat tarihiyle sınırlıdır; kritik işlerde resmî kaynaktan doğrulayın.",
   "Tek sunucuda çalışır, yedekli (HA) değildir. Beta.",

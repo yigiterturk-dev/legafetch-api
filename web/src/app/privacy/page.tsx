@@ -25,8 +25,9 @@ export default function GizlilikSayfasi() {
             <h2>Dil modeline gönderilenler</h2>
             <p className="kucuk" style={{ marginTop: 6 }}>
               Cevabın yazılması için <strong>sorgunuz ve eşleşen pasajlar</strong>{" "}
-              OpenAI&apos;ye (gpt-4o-mini) gönderilir; hizmetin dışarıya veri
-              çıkan tek adımı budur. Sorgunuzda müvekkil adı, dosya numarası
+              OpenAI&apos;ye (gpt-4o-mini) gönderilir. Sözleşme denetimi ve
+              dilekçe üretiminde girdiğiniz metin de aynı yere gider; dışarıya
+              veri çıkan adımlar bunlardır. Sorgunuzda müvekkil adı, dosya numarası
               gibi kişisel veri yazmayın.
             </p>
           </section>
@@ -35,9 +36,16 @@ export default function GizlilikSayfasi() {
             <h2>Yüklenen belgeler</h2>
             <p className="kucuk" style={{ marginTop: 6 }}>
               Belge işlenmek üzere belleğe alınır, metni çıkarılır ve istek
-              bitince bırakılır; diske yazılmaz, külliyata eklenmez ve dil
-              modeline gönderilmez — yalnızca sunucu içindeki aramada
-              kullanılır.
+              bitince bırakılır; diske yazılmaz ve külliyata eklenmez.
+              <strong>
+                {" "}Sözleşme denetiminde sözleşme metni, dilekçe üretiminde
+                yazdığınız maddi olay anlatımı, taslağı yazdırmak için
+                OpenAI&apos;ye gönderilir.
+              </strong>{" "}
+              Yalnızca mevzuat eşleştirmesi için yüklenen belgeler ise sunucu
+              içinde kalır. Müvekkilinizi tanıtan bilgileri (ad, TCKN, dosya
+              numarası) yüklemeden önce metinden çıkarın — Avukatlık Kanunu
+              m.36 kapsamındaki sır saklama yükümlülüğü sizde kalır.
             </p>
           </section>
 
