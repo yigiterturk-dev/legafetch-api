@@ -73,6 +73,44 @@ CORPUS_MEVZUAT_K = int(os.environ.get("CORPUS_MEVZUAT_K", "8"))
 # kalince dogru madde (TKHK m.5 gibi) semantik top-6'ya girip rerank'a
 # ulasamiyordu; cap 8'e cikarildi ve anahtar-sorgu probe'u eklendi.
 CORPUS_MEVZUAT_FETCH_K = int(os.environ.get("CORPUS_MEVZUAT_FETCH_K", "24"))
+# Sozcuksel (BM25) mevzuat kolunun aday sayisi. Bellek ici indeks,
+# maliyeti milisaniye — rerank'e giren cift sayisini artirdigi icin
+# yine de olculu tutulur.
+CORPUS_MEVZUAT_BM25_K = int(os.environ.get("CORPUS_MEVZUAT_BM25_K", "0"))
+# BM25 skorunun secim formulundeki agirligi. Olculdu 2026-09-21:
+# BM25 adaylarini havuza EKLEMEK tek basina erisimi kotulestirdi
+# (hit@5 15->14) — cunku secim hala yalniz rerank + anahtar boost ile
+# yapiliyordu, havuz buyuyunce rerank yanlis maddeyi seciyordu.
+# Sozcuksel sinyal secime de girmeli.
+# 🔴 OLCUM SONUCU (2026-09-21, grid_hat.py — 10 kombinasyon x 20 soru):
+# BM25 kolu mevzuat erisimine FAYDA SAGLAMADI, sadece zarar verdi:
+#   bm25_k=0 boost=0.0 -> hit@5 15/20  MRR 0.725   (KAPALI = en iyi)
+#   bm25_k=8 boost=0.3 -> hit@5 15/20  MRR 0.700
+#   bm25_k=8 boost=0.5 -> hit@5 14/20  MRR 0.675
+#   bm25_k=8 boost=1.0 -> hit@5 13/20  MRR 0.625
+# Sozcuksel kol "itirazin iptali" gibi fraz sorularini kurtariyor ama
+# "garanti 2 mevzuat maddesi" kurali yuzunden havuz buyudukce baska
+# sorularda yanlis madde seciliyor; net etki sifir ya da eksi.
+# Kod SILINMEDI: ictihat kolunda (9,86M pasaj, dense'in zayif oldugu yer)
+# denenmeye deger ve es anlamli sozlugu orada da lazim olacak.
+# Acmadan once grid_hat.py'yi yeniden kosun.
+MEVZUAT_BM25_BOOST = float(os.environ.get("MEVZUAT_BM25_BOOST", "0"))
+
+# Mevzuat maddesi listenin BASINA yalniz yeterince guclu bir isabetse
+# konur. Olculdu 2026-09-21: maddeleri kosulsuz basa almak MRR'i 0.185'ten
+# 0.725'e cikardi AMA alakasiz maddeleri de vitrine tasidi — "tuketici
+# sozlesmesindeki haksiz madde" sorgusuna @1 TCK Gecici-1, @2 İİK m.281
+# geliyordu (ham rerank skorlari 0.370 ve 0.246). Dogru isabetlerin ham
+# skoru tipik olarak 0.68+ (1475 m.14: 0.684, 4857 m.53: 0.988).
+# Esigin ALTINDA kalan madde atilmaz — sadece ictihadin ARDINA dusurulur:
+# kanun dayanagi cevapta kalsin ama yanlissa ilk gorulen sey olmasin.
+# TARANDI 2026-09-21 (grid_esik.py, IKI olcum setinde): esik YUKSELDIKCE
+# erisim kotulesiyor — 0.0 ort MRR 0.613, 0.5 -> 0.568, 0.7 -> 0.549,
+# tamamen kapali (eski davranis) -> 0.155. Yani "zayif mevzuati geri it"
+# sezgim olcumde curudu; varsayilan 0 (kosulsuz basa).
+# NOT: bu setler "dogru madde kacinci sirada" olcer, "alakasiz madde ne
+# siklikla @1" OLCMEZ. Gurultu ayri bir olcumun konusu (test_gurultu.py).
+MEVZUAT_BASA_ESIK = float(os.environ.get("MEVZUAT_BASA_ESIK", "0"))
 # Mevzuat seciminde anahtar-kelime cakisma boost'u: bge-reranker-base kisa
 # kanun maddelerinde ~0 skor uretip ayirt edemedigi icin, sorgu terimlerinin
 # madde metninde gecme oranina kucuk bir bonus eklenir (yalnizca mevzuat
@@ -100,6 +138,7 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip()
 OPENAI_TIMEOUT_S = int(os.environ.get("OPENAI_TIMEOUT_S", "40"))
 from rerank import rerank, rerank_scored, RERANK_ENABLED  # noqa: E402
+import mevzuat_bm25  # noqa: E402
 CORPUS_MAX_PER_BELGE = int(os.environ.get("CORPUS_MAX_PER_BELGE", "2"))
 REMOTE_MODE = bool(QDRANT_URL)
 
@@ -394,6 +433,24 @@ def mevzuat_havuz_daralt(query: str, mev_aday: list) -> list:
     return daralt or mev_aday
 
 
+def _mevzuat_metin(p: dict) -> str:
+    """Madde metnine kenar basligini onekler.
+
+    Kenar basligi ("Yoksulluk nafakasi") avukatin aradigi terimdir ve madde
+    GOVDESINDE cogu zaman hic gecmez: TMK m.175'in metninde ne "yoksulluk" ne
+    "nafaka" gecer, ikisi de yalnizca kenar basligindadir. Baslik metnin onune
+    konmazsa reranker ve anahtar-orani kapisi maddeyi konuyla iliskilendiremez
+    (olculdu 2026-09-21).
+    """
+    metin = p.get("metin", "") or ""
+    baslik = (p.get("baslik", "") or "").strip()
+    if not baslik:
+        return metin
+    if baslik.split(" \u2014 ")[-1].lower() in metin.lower():
+        return metin
+    return baslik + "\n" + metin
+
+
 def _mevzuat_dense_ara(sorgu: str, k: int) -> list:
     """Tek bir sorgu icin mevzuat filtreli dense arama."""
     vec = embeddings.embed_query("query: " + sorgu)
@@ -415,7 +472,7 @@ def _mevzuat_dense_ara(sorgu: str, k: int) -> list:
         p = pt.payload or {}
         docs.append(
             Document(
-                page_content=p.get("metin", ""),
+                page_content=_mevzuat_metin(p),
                 metadata={
                     "source": temiz_kaynak(p),
                     "authority_score": corpus_authority(p),
@@ -571,14 +628,57 @@ def _tekillestir(docs: list) -> list:
 # /api/chat ile eval'lerin AYNI yolu olcmesi icin handler'dan cikarildi.
 # Ders (2026-09-17 eval_rerank): eval kendi kopyasini yazinca mevzuat kolu
 # hic olculmedi ve "mevzuat=0" yanlisi cikti — olcum = uretim olmali.
+def _mevzuat_bm25_ara(query: str, k: int) -> list:
+    """Sozcuksel mevzuat kolu (bellek ici BM25).
+
+    Dense kolun kor noktasi: 9,86M ictihata karsi 8,4K mevzuat var, ve e5
+    gommesi diakritige duyarli. Olculdu 2026-09-21: ICRA sorulari (itirazin
+    iptali / odeme emrine itiraz / ihtiyati haciz) dense kolda HIC gelmiyor,
+    ASCII yazimda hit@5 %75'ten %50'ye dusuyor. BM25 ikisini de kapatir:
+    tam sozcuk eslesmesi + sorgu/dokuman ayni normalizasyondan geciyor."""
+    if not mevzuat_bm25.BM25_ENABLED:
+        return []
+    try:
+        idx = mevzuat_bm25.indeks_al(client, collection_name)
+    except Exception as e:  # indeks kurulamazsa dense kol tek basina calissin
+        print(f"[mevzuat-bm25] indeks kurulamadi, atlaniyor: {e}", flush=True)
+        return []
+    docs = []
+    for pl, skor in idx.ara(query, k):
+        docs.append(
+            Document(
+                page_content=pl.get("metin", ""),
+                metadata={
+                    "source": temiz_kaynak(pl),
+                    "authority_score": corpus_authority(pl),
+                    "jurisdiction": "TR",
+                    "tarih": pl.get("tarih", ""),
+                    "daire": pl.get("daire", ""),
+                    "esasNo": pl.get("esasNo", ""),
+                    "kararNo": pl.get("kararNo", ""),
+                    "docId": pl.get("docId", ""),
+                    "tur": "mevzuat",
+                    "bm25_skor": round(skor, 3),
+                },
+            )
+        )
+    return docs
+
+
 def corpus_rank(query: str, k: int = None) -> list:
     """Ictihat + mevzuat kollari (paralel) -> kanun-no daraltma -> tek gecis
     rerank -> garanti en iyi 2 FARKLI mevzuat madde. Uretim ve eval ortak yol."""
     k = k if k is not None else CORPUS_K
-    with ThreadPoolExecutor(max_workers=2) as havuz:
+    with ThreadPoolExecutor(max_workers=3) as havuz:
         f_aday = havuz.submit(corpus_search, query, max(k, CORPUS_FETCH_K))
         f_mev = havuz.submit(corpus_search_mevzuat, query, CORPUS_MEVZUAT_FETCH_K)
+        f_bm25 = (
+            havuz.submit(_mevzuat_bm25_ara, query, CORPUS_MEVZUAT_BM25_K)
+            if CORPUS_MEVZUAT_BM25_K > 0
+            else None
+        )
         aday, mev_ham = f_aday.result(), f_mev.result()
+        mev_bm25 = f_bm25.result() if f_bm25 is not None else []
     # Mevzuat havuzu Qdrant'tan genis cekilir (ucuz), kanun no'ya daraltilir,
     # sonra yalnizca ilk CORPUS_MEVZUAT_K'si rerank'e girer (pahali).
     mev_aday = mevzuat_havuz_daralt(query, mev_ham)[:CORPUS_MEVZUAT_K]
@@ -587,25 +687,49 @@ def corpus_rank(query: str, k: int = None) -> list:
         query,
         [d for d in aday if d.metadata.get("tur") == "mevzuat"] + mev_aday,
     )
+    # Sozcuksel kol daraltmanin DISINDA eklenir: kanun-no daraltmasi dense
+    # havuzu icin yazilmisti, BM25 zaten tam sozcuk eslesmesiyle geliyor.
+    mev_aday = _tekillestir(mev_aday + mev_bm25)
     ictihat_aday = [d for d in aday if d.metadata.get("tur") != "mevzuat"]
     skorlu = rerank_scored(query, _tekillestir(ictihat_aday + mev_aday))
     # Mevzuat secimi: rerank skoru + anahtar-cakisma boost'u. Olculdu
     # (2026-09-17): bge-reranker-base kisa kanun maddelerinde ~0 skor
     # uretip TCK Geçici-1'i TKHK'nin ustune koyabiliyor; keyword cakismasi
     # ikinci bir sinyal olarak eklenir (yalnizca mevzuat seciminde).
+    # Sozcuksel skor: adaylarin TAMAMI icin (dense kolundan gelenler dahil).
+    # Yalniz BM25 kolundan gelenlere boost vermek adaletsiz olurdu ve ayni
+    # maddeyi iki kolun birden bulmasini odullendirmezdi.
+    try:
+        if MEVZUAT_BM25_BOOST <= 0:
+            raise RuntimeError("bm25 kapali")  # indeksi hic kurma
+        bm25_skorlari = mevzuat_bm25.skor_sozlugu(client, collection_name, query)
+        bm25_azami = max(bm25_skorlari.values()) if bm25_skorlari else 0.0
+    except Exception as e:
+        if MEVZUAT_BM25_BOOST > 0:
+            print(f"[mevzuat-bm25] skor sozlugu alinamadi: {e}", flush=True)
+        bm25_skorlari, bm25_azami = {}, 0.0
+
     mev_skorlu = []
     for d, s in skorlu:
         if d.metadata.get("tur") != "mevzuat":
             continue
         ham_skor = s if s is not None else 0.0
         anahtar_orani = _anahtar_hit_orani(query, d.page_content)
+        # BM25 skoru sorgudan sorguya olcek degistirir (terim sayisi, IDF);
+        # havuzun azamisine bolunerek 0..1 arasina cekilir, boylece rerank
+        # skoruyla kiyaslanabilir bir katki olur.
+        bm25_ham = bm25_skorlari.get(d.metadata.get("docId", ""), 0.0)
+        bm25_oran = (bm25_ham / bm25_azami) if bm25_azami > 0 else 0.0
         mev_skorlu.append(
-            (d, ham_skor + MEVZUAT_KW_BOOST * anahtar_orani,
+            (d,
+             ham_skor + MEVZUAT_KW_BOOST * anahtar_orani
+             + MEVZUAT_BM25_BOOST * bm25_oran,
              ham_skor, anahtar_orani)
         )
     mev_skorlu.sort(key=lambda x: x[1], reverse=True)
     # Kanun dayanagi temsili garanti: en iyi 2 FARKLI madde her cevapta yer
     # alir (içtihat maddeye ATIF yapar, maddeyi İÇERMEZ)
+    # (dokuman, ham_rerank_skoru) — ham skor basa-koyma kararinda kullanilir
     mev_eniyi, gorulen_madde = [], set()
     for d, skor, ham_skor, anahtar_orani in mev_skorlu:
         kaynak = d.metadata.get("source", "")
@@ -620,13 +744,22 @@ def corpus_rank(query: str, k: int = None) -> list:
             continue
         if kaynak not in gorulen_madde:
             gorulen_madde.add(kaynak)
-            mev_eniyi.append(d)
+            mev_eniyi.append((d, ham_skor))
             print(f"[mevzuat-secildi] skor={skor:.3f} ham={ham_skor:.3f} "
                   f"hit={anahtar_orani:.3f} :: {kaynak[:70]}", flush=True)
         if len(mev_eniyi) == 2:
             break
     ictihat = [d for d, _ in skorlu if d.metadata.get("tur") != "mevzuat"]
-    return ictihat[: max(0, k - len(mev_eniyi))] + mev_eniyi
+    # SIRALAMA (2026-09-21 olculdu): mevzuat sona eklenince dogru kanun
+    # maddesi yapisal olarak 4.-5. siraya mahkum kaliyordu - hit@5 %75
+    # iken MRR yalniz 0.185. Hukuki sunum sirasi da ayni yone isaret
+    # eder: once dayanak (norm), sonra onu yorumlayan ictihat.
+    # Ama kosulsuz one almak alakasiz maddeyi de vitrine tasiyor; bu yuzden
+    # yalniz guclu isabetler basa gecer, zayiflar ictihadin ardina duser.
+    basta = [d for d, ham in mev_eniyi if ham >= MEVZUAT_BASA_ESIK]
+    sonda = [d for d, ham in mev_eniyi if ham < MEVZUAT_BASA_ESIK]
+    kalan = max(0, k - len(basta) - len(sonda))
+    return basta + ictihat[:kalan] + sonda
 
 
 if not REMOTE_MODE:
