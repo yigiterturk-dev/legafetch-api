@@ -157,8 +157,8 @@ export default function Home() {
         <h1>Hukuk külliyatında anlam tabanlı arama</h1>
         <p className="spot" style={{ marginTop: 12 }}>
           Soruyu gündelik dille yazın; motor kelime eşleşmesine değil anlama göre
-          arar ve eşleşen pasajı kaynağıyla birlikte döndürür. Yorum üretmez,
-          metni olduğu gibi getirir.
+          arar, bulduğu pasajlardan atıflı bir cevap çıkarır ve kullandığı
+          kaynakları altına ekler.
         </p>
 
         <div className="sayac">
@@ -282,9 +282,10 @@ export default function Home() {
         </section>
 
         <p className="uyari" style={{ marginTop: 16 }}>
-          Dönen metin, külliyattaki kaynağın kendi ifadesidir; motor özet veya
-          hukuki değerlendirme yazmaz. Kararın güncelliğini ve olaya
-          uygunluğunu kaynağından doğrulayın.
+          Cevabı bir dil modeli, yalnızca aşağıda listelenen pasajlara
+          dayanarak yazar — atıflar bu yüzden önemli. Sorgunuz ve seçilen
+          pasajlar bu adımda OpenAI&apos;ye gönderilir. Metni kullanmadan önce
+          kaynağını açıp doğrulayın; hukuki değerlendirme yerine geçmez.
         </p>
 
         <section className="uclu" style={{ marginTop: 48 }}>
@@ -293,7 +294,8 @@ export default function Home() {
             <p className="kucuk" style={{ marginTop: 6 }}>
               Sorgu bir vektöre çevrilir, külliyattaki pasajlarla yakınlığına
               göre aday çıkarılır, ardından yeniden sıralanır. Aynı kavramın
-              farklı kelimelerle yazıldığı kararları da bulur.
+              farklı kelimelerle yazıldığı kararları da bulur. Bu adımlar
+              sunucumuzda, dışarıya çıkmadan yapılır.
             </p>
           </div>
           <div>

@@ -17,8 +17,17 @@ export default function GizlilikSayfasi() {
             <p className="kucuk" style={{ marginTop: 6 }}>
               Hizmet, bizim işlettiğimiz adanmış bir sunucuda barındırılır.
               Arama zinciri — gömme, vektör araması, yeniden sıralama — aynı
-              makinede çalışır. Sorgunuz veya yüklediğiniz belge herhangi bir
-              dil modeli sağlayıcısına ya da üçüncü tarafa gönderilmez.
+              makinede çalışır.
+            </p>
+          </section>
+
+          <section>
+            <h2>Dil modeline gönderilenler</h2>
+            <p className="kucuk" style={{ marginTop: 6 }}>
+              Cevabın yazılması için <strong>sorgunuz ve eşleşen pasajlar</strong>{" "}
+              OpenAI&apos;ye (gpt-4o-mini) gönderilir; hizmetin dışarıya veri
+              çıkan tek adımı budur. Sorgunuzda müvekkil adı, dosya numarası
+              gibi kişisel veri yazmayın.
             </p>
           </section>
 
@@ -26,7 +35,9 @@ export default function GizlilikSayfasi() {
             <h2>Yüklenen belgeler</h2>
             <p className="kucuk" style={{ marginTop: 6 }}>
               Belge işlenmek üzere belleğe alınır, metni çıkarılır ve istek
-              bitince bırakılır; diske yazılmaz ve külliyata eklenmez.
+              bitince bırakılır; diske yazılmaz, külliyata eklenmez ve dil
+              modeline gönderilmez — yalnızca sunucu içindeki aramada
+              kullanılır.
             </p>
           </section>
 

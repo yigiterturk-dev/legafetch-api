@@ -4,7 +4,7 @@ import Ust, { Alt } from "@/components/ust";
 export const metadata = {
   title: "LegaFetch — Türk hukuk külliyatında anlam tabanlı arama",
   description:
-    "9,87 milyon pasajlık Türk yargı kararı ve mevzuat külliyatında, kelime değil anlam eşleşmesiyle arama. Sonuç, kaynağıyla birlikte ham pasaj olarak döner.",
+    "9,87 milyon pasajlık Türk yargı kararı ve mevzuat külliyatında anlam eşleşmesiyle arama. Cevap yalnızca bulunan pasajlara dayandırılır ve her iddia kaynağına atıflanır.",
 };
 
 const NEDEN = [
@@ -14,9 +14,9 @@ const NEDEN = [
       "Sorgu bir vektöre çevrilir ve külliyattaki pasajlarla anlam yakınlığına göre eşleştirilir. Aradığınız kavramın başka kelimelerle yazıldığı kararlar da çıkar — aynı ifadeyi tutturmanız gerekmez.",
   },
   {
-    baslik: "Kaynağını gösterir, yorum eklemez",
+    baslik: "Cevabı kaynağa bağlar",
     metin:
-      "Dönen metin kaynağın kendi ifadesidir. Motor özet yazmaz, sonuç uydurmaz, cümle tamamlamaz. Her pasajın yanında hangi merciden geldiği yazar.",
+      "Bulunan pasajlar bir dil modeline verilir ve cevap YALNIZCA o pasajlara dayanarak yazılır; her iddia [n] biçiminde ilgili pasaja atıflanır. Kullanılan kaynaklar cevabın altında listelenir, doğrulaması sizde kalır.",
   },
   {
     baslik: "Belgeden mevzuata",
@@ -27,7 +27,9 @@ const NEDEN = [
 
 const SINIRLAR = [
   "Külliyat ağırlıklı olarak içtihattır; mevzuat tarafı şu an 19 kanunla sınırlıdır.",
-  "Motor hukuki görüş üretmez. Çıkan pasajın olayınıza uygunluğunu siz değerlendirirsiniz.",
+  "Cevabı bir dil modeli yazar. Yalnızca bulunan pasajlara dayanması istenir ama bu garanti değildir; atıfları açıp okuyun.",
+  "Sorgunuz ve eşleşen pasajlar, cevabı yazdırmak için OpenAI'ye gönderilir. Yüklediğiniz belgeler gönderilmez.",
+  "Motor hukuki görüş üretmez. Çıkan sonucun olayınıza uygunluğunu siz değerlendirirsiniz.",
   "Kararların güncelliği hasat tarihiyle sınırlıdır; kritik işlerde resmî kaynaktan doğrulayın.",
   "Tek sunucuda çalışır, yedekli (HA) değildir. Beta.",
 ];
@@ -48,7 +50,8 @@ export default function TanitimSayfasi() {
             LegaFetch, Türk yargı kararları ve mevzuat metinlerinden oluşan 9,87
             milyon pasajlık bir külliyatta anlam tabanlı arama yapar. Soruyu
             gündelik dille yazarsınız; motor, kelime eşleşmesine değil kavram
-            yakınlığına bakar ve bulduğu pasajı kaynağıyla birlikte döndürür.
+            yakınlığına bakar; bulduğu pasajlardan atıflı bir cevap çıkarır ve
+            kullandığı kaynakları yanında gösterir.
           </p>
 
           <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 28 }}>
@@ -116,8 +119,9 @@ export default function TanitimSayfasi() {
               derece içtihadın önüne alınır.
             </li>
             <li>
-              Sonuç, pasajın kendi metni ve kaynağı olarak döner. Karar metnini
-              oradan doğrulayıp kullanırsınız.
+              Seçilen pasajlar bir dil modeline verilir; cevap yalnızca o
+              pasajlara dayanarak, atıflarıyla birlikte yazılır. Kaynakları
+              açıp doğrulayıp kullanırsınız.
             </li>
           </ol>
         </section>

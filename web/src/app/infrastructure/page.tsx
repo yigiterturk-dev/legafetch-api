@@ -10,9 +10,10 @@ export default function AltyapiSayfasi() {
       <main className="kap kap-dar" style={{ paddingTop: 40 }}>
         <h1>Altyapı</h1>
         <p className="spot" style={{ marginTop: 12 }}>
-          Sistem, bize ait tek bir adanmış sunucuda çalışır. Arama zinciri
-          uçtan uca kendi makinemizdedir; sorgu ya da belge herhangi bir dil
-          modeli sağlayıcısına gönderilmez.
+          Arama zinciri — gömme, vektör araması, yeniden sıralama — bize ait
+          tek bir adanmış sunucuda çalışır. Son adımda, cevabın yazılması için
+          sorgu ve seçilen pasajlar OpenAI&apos;ye gönderilir; yüklenen
+          belgeler gönderilmez.
         </p>
 
         <div className="uclu" style={{ marginTop: 32 }}>
@@ -28,7 +29,16 @@ export default function AltyapiSayfasi() {
             <h3>Gömme ve yeniden sıralama</h3>
             <p className="kucuk" style={{ marginTop: 6 }}>
               Çok dilli açık kaynak gömme modeli ve BGE yeniden sıralayıcı,
-              aynı sunucuda CPU üzerinde çalışır. Dışarıya model çağrısı yoktur.
+              aynı sunucuda CPU üzerinde çalışır. Bu adımlarda dışarıya çağrı
+              yoktur.
+            </p>
+          </div>
+          <div className="kart kart-dolgu">
+            <h3>Cevap katmanı</h3>
+            <p className="kucuk" style={{ marginTop: 6 }}>
+              Seçilen pasajlar OpenAI&apos;nin gpt-4o-mini modeline verilir;
+              cevap yalnızca onlara dayanarak, [n] atıflarıyla yazdırılır.
+              Model anahtarı yoksa sistem ham pasajları döndürmeye düşer.
             </p>
           </div>
           <div className="kart kart-dolgu">
@@ -47,8 +57,8 @@ export default function AltyapiSayfasi() {
             sınırlıdır; aradığınız kanun külliyatta olmayabilir.
           </li>
           <li>
-            Motor yorum üretmez, özet yazmaz. Dönen metin kaynağın kendi
-            ifadesidir.
+            Cevabı bir dil modeli yazar; yalnızca bulunan pasajlara dayanması
+            istenir ama bu garanti değildir. Atıfları açıp doğrulayın.
           </li>
           <li>
             Kararların güncelliği hasat tarihiyle sınırlıdır; sonucu resmî
