@@ -18,7 +18,7 @@ export default function GirisEkrani() {
         body: JSON.stringify({ license: anahtar }),
       });
       if (yanit.ok) {
-        window.location.href = "/";
+        window.location.href = "/konsol";
         return;
       }
       setHata(

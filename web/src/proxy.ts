@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { verifySessionToken } from "@/lib/session";
 
 // Uygulama sayfalarını korur: imzalı oturum cookie'si yoksa /login'e yönlendirir.
-const PROTECTED = ["/", "/admin", "/api/proxy"];
+const PROTECTED = ["/konsol", "/admin", "/api/proxy"];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -16,5 +16,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/admin/:path*", "/api/proxy/:path*"],
+  matcher: ["/konsol/:path*", "/admin/:path*", "/api/proxy/:path*"],
 };

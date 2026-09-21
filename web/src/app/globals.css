@@ -451,3 +451,9 @@ h3 {
   h1 { font-size: 25px; }
   .kap { padding: 0 16px; }
 }
+
+/* Tailwind preflight liste isaretlerini siliyor; metin listelerinde geri aciyoruz. */
+main ol { list-style: decimal; }
+main ul { list-style: disc; }
+main li { padding-left: 4px; }
+main li::marker { color: var(--metin-3); }

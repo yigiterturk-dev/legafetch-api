@@ -27,7 +27,7 @@ export default function YonetimSayfasi() {
 
   return (
     <>
-      <Ust />
+      <Ust mod="uygulama" />
       <main className="kap" style={{ paddingTop: 40 }}>
         <h1>Yönetim</h1>
         <p className="spot" style={{ marginTop: 12 }}>

@@ -1,16 +1,29 @@
 import React from "react";
 
-export default function Ust() {
+export default function Ust({ mod = "acik" }: { mod?: "acik" | "uygulama" }) {
   return (
     <header className="ust">
       <div className="kap ust-ic">
-        <a href="/" className="marka">
+        <a href={mod === "uygulama" ? "/konsol" : "/"} className="marka">
           LegaFetch <span>beta</span>
         </a>
         <nav className="ust-gezinti">
           <a href="/documentation">API</a>
           <a href="/infrastructure">Altyapı</a>
-          <a href="/admin">Yönetim</a>
+          {mod === "uygulama" ? (
+            <>
+              <a href="/admin">Yönetim</a>
+              <form action="/api/auth/logout" method="post">
+                <button type="submit" className="dugme dugme-yazi">
+                  Çıkış
+                </button>
+              </form>
+            </>
+          ) : (
+            <a href="/login" className="dugme dugme-sade">
+              Giriş yap
+            </a>
+          )}
         </nav>
       </div>
     </header>
