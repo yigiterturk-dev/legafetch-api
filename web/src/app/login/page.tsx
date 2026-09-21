@@ -69,7 +69,7 @@ export default function GirisEkrani() {
             autoComplete="off"
             value={anahtar}
             onChange={(e) => setAnahtar(e.target.value)}
-            placeholder="Size verilen anahtarı yapıştırın"
+            placeholder="LGF-XXXX-XXXX-XXXX"
           />
 
           {hata && (
