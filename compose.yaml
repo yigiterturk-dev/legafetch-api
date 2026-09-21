@@ -1,37 +1,81 @@
+# LegaFetch yigini - netcup VPS 4000 G12 (31 GB RAM, 12 vCPU, 1 TB)
+# Hetzner'den tasindi 2026-09-20. Orada 15,6 GB'lik makinede Qdrant 14g
+# tavaniyla host'u dibe cekiyordu; burada tek is bu, tavan 24g.
 services:
-  legafetch-api:
-    build: .
+  qdrant:
+    image: qdrant/qdrant:v1.18.2
+    container_name: legafetch-qdrant
+    restart: unless-stopped
+    mem_limit: 24g
+    environment:
+      QDRANT__STORAGE__MMAP_THRESHOLD_KB: "262144"
+      QDRANT__STORAGE__PERFORMANCE__MAX_SEARCH_THREADS: "8"
+      QDRANT__STORAGE__PERFORMANCE__MAX_OPTIMIZATION_THREADS: "4"
+    env_file: [qdrant.env]
+    volumes:
+      - /opt/legafetch/qdrant-storage:/qdrant/storage
+      - /opt/legafetch/snapshots:/qdrant/snapshots
+    ports:
+      - "127.0.0.1:6333:6333"
+    labels:
+      autoheal: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 300s
+
+  api:
+    build: ./api
     image: legafetch-api:latest
     container_name: legafetch-api
     restart: unless-stopped
-    mem_limit: 4000m
-    memswap_limit: 4000m
-    env_file: .env.production
-    networks: [lexordo_default]
+    mem_limit: 6g
+    env_file: [./api/.env.production]
+    environment:
+      QDRANT_URL: http://qdrant:6333
+    depends_on:
+      qdrant:
+        condition: service_healthy
     volumes:
       - hf-cache:/root/.cache/huggingface
-    expose: ["8000"]
-    # OLCULDU 2026-09-17: Qdrant OOM ile yeniden basladiginda bu servis AYAKTA
-    # kaliyor ama qdrant_client'in baglanti havuzu olu kaliyor
-    # ("ResponseHandlingException: Server disconnected") ve /health 500 donuyor.
-    # `restart: unless-stopped` ise yaramiyor — konteyner CIKMIYOR ki restart olsun.
-    # Sonuc: bir OOM = biri elle restart edene kadar kesinti (o gun saatlerce surdu).
-    # Healthcheck bu durumu "unhealthy" olarak gorunur kilar; asagidaki autoheal
-    # servisi de unhealthy konteyneri yeniden baslatir.
-    # Not: konteyner acilista rerank modelini yukluyor — start_period bunu bekler.
+      # Gercek sorgu kaydi: asil olcum seti kullanicidan gelir, konteyner
+      # yeniden yaratildiginda kaybolmamali.
+      - ./api/loglar:/app/loglar
+    ports:
+      - "127.0.0.1:8000:8000"
+    labels:
+      autoheal: "true"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=20).status==200 else 1)\""]
       interval: 60s
       timeout: 25s
       retries: 10
       start_period: 180s
+
+  web:
+    build: ./web
+    image: legafetch-web:latest
+    container_name: legafetch-web
+    restart: unless-stopped
+    mem_limit: 1g
+    env_file: [./web/.env.production]
+    environment:
+      API_BACKEND_URL: http://api:8000
+      COOKIE_SECURE: "1"
+    depends_on:
+      api:
+        condition: service_healthy
     labels:
       autoheal: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3000/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
-  # Unhealthy isaretlenen konteynerleri yeniden baslatir. Docker'in kendisi
-  # bunu YAPMAZ: `restart` politikasi yalnizca CIKAN konteyneri ilgilendirir,
-  # saglik durumunu umursamaz. Yalnizca autoheal=true etiketli konteynerlere
-  # dokunur (AUTOHEAL_CONTAINER_LABEL), makinedeki diger projeler guvende.
   autoheal:
     image: willfarrell/autoheal:latest
     container_name: legafetch-autoheal
@@ -44,8 +88,22 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     mem_limit: 64m
 
-networks:
-  lexordo_default:
-    external: true
+  caddy:
+    image: caddy:2
+    container_name: legafetch-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /opt/legafetch/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+      - caddy-log:/var/log/caddy
+    depends_on: [api, web]
+
 volumes:
   hf-cache:
+  caddy-data:
+  caddy-config:
+  caddy-log:

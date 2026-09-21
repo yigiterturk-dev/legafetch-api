@@ -14,6 +14,7 @@ from langchain_core.documents import Document
 
 import ipaddress
 import os
+from datetime import datetime, timezone
 import re
 import json
 import urllib.request
@@ -136,6 +137,12 @@ MEVZUAT_MIN_ANAHTAR_ORANI = float(
 # kompozisyona dusulur (fail-open — urun asla bozulmaz).
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip()
+# Uc nokta yapilandirilabilir: DeepSeek, Groq, Together ve yerel sunucular
+# ayni /chat/completions sozlesmesini konusuyor, yalniz alan adi degisiyor.
+# Sabit api.openai.com yazilirsa saglayici degistirmek kod degisikligi ister.
+OPENAI_BASE_URL = os.environ.get(
+    "OPENAI_BASE_URL", "https://api.openai.com/v1"
+).strip().rstrip("/")
 OPENAI_TIMEOUT_S = int(os.environ.get("OPENAI_TIMEOUT_S", "40"))
 from rerank import rerank, rerank_scored, RERANK_ENABLED  # noqa: E402
 import mevzuat_bm25  # noqa: E402
@@ -558,6 +565,40 @@ def corpus_search(query: str, k: int) -> list:
     return docs
 
 
+# Gercek sorgu kaydi. Elle yazilmis 50 soruluk setler egilim olcer; urunun
+# gercek erisim kalitesi ancak KULLANICININ sordugu sorularla olculur
+# (avukat "muvekkilim 3 yil 8 ay calisti, ihbar oneli ne kadar" diye sorar,
+# bizim setimizdeki gibi "ihbar oneli sureleri nedir" diye degil).
+# Yalnizca sorgu ve donen kaynaklar yazilir: kimlik, IP, oturum YOK.
+SORGU_KAYDI = os.environ.get("SORGU_KAYDI", "/app/loglar/sorgular.jsonl").strip()
+
+
+def sorgu_kaydet(query: str, ranked: list, sure_ms: int, llm: bool) -> None:
+    """Sorguyu ve donen kaynaklari JSONL'e ekler. Kayit ASLA istegi dusurmez."""
+    if not SORGU_KAYDI:
+        return
+    try:
+        os.makedirs(os.path.dirname(SORGU_KAYDI), exist_ok=True)
+        satir = {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "sorgu": query,
+            "sure_ms": sure_ms,
+            "llm": llm,
+            "sonuc": [
+                {
+                    "kaynak": d.metadata.get("source", ""),
+                    "docId": d.metadata.get("docId", ""),
+                    "tur": d.metadata.get("tur", ""),
+                }
+                for d in ranked[:5]
+            ],
+        }
+        with open(SORGU_KAYDI, "a", encoding="utf-8") as f:
+            f.write(json.dumps(satir, ensure_ascii=False) + "\n")
+    except Exception as e:  # disk dolu, izin, vs. — yanit yine de gitsin
+        print(f"[sorgu-kaydi] yazilamadi: {e}", flush=True)
+
+
 def llm_cevap(query: str, ranked: list) -> str | None:
     """Pasajlara dayalı OpenAI sentezi. Anahtar yok / hata olursa None —
     çağıran taraf keyless extractive kompozisyona düşer."""
@@ -595,7 +636,7 @@ def llm_cevap(query: str, ranked: list) -> str | None:
         ensure_ascii=False,
     )
     istek = urllib.request.Request(
-        "https://api.openai.com/v1/chat/completions",
+        f"{OPENAI_BASE_URL}/chat/completions",
         data=govde.encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -816,7 +857,11 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
         )
         # Uretici katman: OPENAI_API_KEY varsa pasajlara dayali gercek yanit;
         # anahtar yok / cagri basarisizsa keyless extractive kompozisyona dus.
+        _t0_llm = time.time()
         uretilen = llm_cevap(request.query, ranked)
+        sorgu_kaydet(
+            request.query, ranked, int((time.time() - _t0_llm) * 1000), bool(uretilen)
+        )
         if uretilen:
             context_text = uretilen + "\n\nKaynaklar:\n" + kaynak_listesi
         else:
