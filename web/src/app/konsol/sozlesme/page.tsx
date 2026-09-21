@@ -146,6 +146,13 @@ export default function SozlesmePage() {
             {sonuc.eksikler.length > 0 && (
               <div>
                 <h3>Sözleşmede bulunmayan, beklenen maddeler</h3>
+                {sonuc.uyari && (
+                  <p className="uyari" style={{ marginTop: 8 }}>
+                    Bu liste yalnızca incelenen bölüme göredir; kırpılan
+                    sayfalarda yer alan maddeler burada &quot;eksik&quot;
+                    görünebilir.
+                  </p>
+                )}
                 <ul style={{ paddingLeft: 20, marginTop: 10, fontSize: 14, lineHeight: 1.8 }}>
                   {sonuc.eksikler.map((e, i) => (
                     <li key={i}>{e}</li>
