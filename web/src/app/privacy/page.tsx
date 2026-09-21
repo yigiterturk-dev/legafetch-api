@@ -1,20 +1,67 @@
-import React from 'react';
+import React from "react";
+import Ust, { Alt } from "@/components/ust";
 
-export default function PrivacyPage() {
+export const metadata = { title: "Gizlilik — LegaFetch" };
+
+export default function GizlilikSayfasi() {
   return (
-    <div className="container" style={{ padding: '6rem 2rem', maxWidth: '800px', margin: '0 auto' }}>
-      <h1 style={{ marginBottom: '2rem' }}>Privacy Policy</h1>
-      <p className="subtitle" style={{ marginBottom: '2rem' }}>Effective Date: September 2026</p>
-      
-      <div style={{ color: '#94a3b8', lineHeight: 1.8 }}>
-        <h2 style={{ color: '#fff', marginTop: '2rem', fontSize: '1.5rem', marginBottom: '1rem' }}>1. Data Sovereignty</h2>
-        <p>LegaFetch operates on an air-gapped infrastructure model. Any legal texts, case files, or proprietary documents uploaded to your instance remain strictly on your server. We do not transmit this data to OpenAI, Anthropic, or any other third-party LLM providers.</p>
-        
-        <h2 style={{ color: '#fff', marginTop: '2rem', fontSize: '1.5rem', marginBottom: '1rem' }}>2. Search Queries</h2>
-        <p>Your semantic search queries are processed locally using open-source embedding models (e.g., HuggingFace sentence-transformers). Query logs are stored only on your VPS and are not accessible by LegaFetch Systems.</p>
-      </div>
-      
-      <a href="/" className="btn btn-secondary" style={{ marginTop: '3rem' }}>&larr; Back to Home</a>
-    </div>
+    <>
+      <Ust />
+      <main className="kap kap-dar" style={{ paddingTop: 40 }}>
+        <h1>Gizlilik</h1>
+        <p className="kucuk" style={{ marginTop: 8 }}>Son güncelleme: 21 Eylül 2026</p>
+
+        <div style={{ display: "grid", gap: 20, marginTop: 28 }}>
+          <section>
+            <h2>Nerede çalışıyor</h2>
+            <p className="kucuk" style={{ marginTop: 6 }}>
+              Hizmet, bizim işlettiğimiz adanmış bir sunucuda barındırılır.
+              Arama zinciri — gömme, vektör araması, yeniden sıralama — aynı
+              makinede çalışır. Sorgunuz veya yüklediğiniz belge herhangi bir
+              dil modeli sağlayıcısına ya da üçüncü tarafa gönderilmez.
+            </p>
+          </section>
+
+          <section>
+            <h2>Yüklenen belgeler</h2>
+            <p className="kucuk" style={{ marginTop: 6 }}>
+              Belge işlenmek üzere belleğe alınır, metni çıkarılır ve istek
+              bitince bırakılır; diske yazılmaz ve külliyata eklenmez.
+            </p>
+          </section>
+
+          <section>
+            <h2>Kayıtlar</h2>
+            <p className="kucuk" style={{ marginTop: 6 }}>
+              Sunucu, işletim ve kötüye kullanım tespiti için erişim kaydı tutar:
+              istek zamanı, yol, durum kodu, IP adresi ve tarayıcı bilgisi.
+              Kayıtlar sınırlı boyutta tutulur ve dönüşümlü olarak silinir.
+              Kayıtlar reklam veya profilleme için kullanılmaz, satılmaz.
+            </p>
+          </section>
+
+          <section>
+            <h2>Çerez</h2>
+            <p className="kucuk" style={{ marginTop: 6 }}>
+              Yalnızca oturum çerezi kullanılır. İmzalıdır, yalnız sunucuya
+              gönderilir (httpOnly) ve oturumun açık olduğunu taşımaktan başka
+              bir şey içermez. İzleme çerezi ve üçüncü taraf analitiği yoktur.
+            </p>
+          </section>
+
+          <section>
+            <h2>İletişim</h2>
+            <p className="kucuk" style={{ marginTop: 6 }}>
+              Sorular ve silme talepleri için{" "}
+              <a href="mailto:iletisim@legafetch.com" style={{ color: "var(--marka)" }}>
+                iletisim@legafetch.com
+              </a>
+              .
+            </p>
+          </section>
+        </div>
+      </main>
+      <Alt />
+    </>
   );
 }

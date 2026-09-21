@@ -1,26 +1,67 @@
-import React from 'react';
+import React from "react";
+import Ust, { Alt } from "@/components/ust";
 
-export default function InfrastructurePage() {
+export const metadata = { title: "Altyapı — LegaFetch" };
+
+export default function AltyapiSayfasi() {
   return (
-    <div className="container" style={{ padding: '6rem 2rem' }}>
-      <h1 style={{ marginBottom: '2rem' }}>Infrastructure Details</h1>
-      <p className="subtitle" style={{ marginBottom: '2rem' }}>LegaFetch is built on a scalable, air-gapped architecture designed specifically for legal data.</p>
-      
-      <div className="features grid-3" style={{ borderTop: 'none', paddingTop: 0 }}>
-        <div className="feature-block">
-          <h3>Vector Database (Qdrant)</h3>
-          <p>Our core relies on Qdrant, a Rust-based vector engine that ensures sub-50ms latency for millions of legal documents. It runs 100% locally on your VPS, ensuring no external data leakage.</p>
+    <>
+      <Ust />
+      <main className="kap kap-dar" style={{ paddingTop: 40 }}>
+        <h1>Altyapı</h1>
+        <p className="spot" style={{ marginTop: 12 }}>
+          Sistem, bize ait tek bir adanmış sunucuda çalışır. Arama zinciri
+          uçtan uca kendi makinemizdedir; sorgu ya da belge herhangi bir dil
+          modeli sağlayıcısına gönderilmez.
+        </p>
+
+        <div className="uclu" style={{ marginTop: 32 }}>
+          <div className="kart kart-dolgu">
+            <h3>Vektör veritabanı</h3>
+            <p className="kucuk" style={{ marginTop: 6 }}>
+              Qdrant. İki koleksiyon: yoğun vektörler 9.860.914 pasaj, seyrek
+              (kelime tabanlı) 6.242.036 pasaj. Külliyatın 8.362 pasajı mevzuat,
+              kalanı yargı kararı.
+            </p>
+          </div>
+          <div className="kart kart-dolgu">
+            <h3>Gömme ve yeniden sıralama</h3>
+            <p className="kucuk" style={{ marginTop: 6 }}>
+              Çok dilli açık kaynak gömme modeli ve BGE yeniden sıralayıcı,
+              aynı sunucuda CPU üzerinde çalışır. Dışarıya model çağrısı yoktur.
+            </p>
+          </div>
+          <div className="kart kart-dolgu">
+            <h3>API katmanı</h3>
+            <p className="kucuk" style={{ marginTop: 6 }}>
+              FastAPI. Hız sınırı, anahtar doğrulaması ve sağlık ucu buradadır;
+              önünde TLS sonlandıran Caddy durur.
+            </p>
+          </div>
         </div>
-        <div className="feature-block">
-          <h3>Semantic Embeddings</h3>
-          <p>We utilize localized, offline embedding models (e.g., all-MiniLM) to tokenize and vectorize Turkish and Spanish legal texts without relying on third-party APIs.</p>
-        </div>
-        <div className="feature-block">
-          <h3>API Layer (FastAPI)</h3>
-          <p>A highly concurrent Python backend handles incoming queries, bridging the gap between the Next.js frontend and the Qdrant database seamlessly.</p>
-        </div>
-      </div>
-      <a href="/" className="btn btn-secondary" style={{ marginTop: '3rem' }}>&larr; Back to Home</a>
-    </div>
+
+        <h2 style={{ marginTop: 40 }}>Dürüst sınırlar</h2>
+        <ul className="kucuk" style={{ marginTop: 10, paddingLeft: 18, display: "grid", gap: 8 }}>
+          <li>
+            Külliyat ağırlıklı olarak içtihattır. Mevzuat tarafı 19 kanunla
+            sınırlıdır; aradığınız kanun külliyatta olmayabilir.
+          </li>
+          <li>
+            Motor yorum üretmez, özet yazmaz. Dönen metin kaynağın kendi
+            ifadesidir.
+          </li>
+          <li>
+            Kararların güncelliği hasat tarihiyle sınırlıdır; sonucu resmî
+            kaynağından doğrulayın.
+          </li>
+          <li>Tek sunucu üzerinde çalışır; yedekli çalışma (HA) yoktur.</li>
+        </ul>
+
+        <p className="kucuk" style={{ marginTop: 24 }}>
+          Sayılar 20 Eylül 2026&apos;da koleksiyonlardan ölçülmüştür.
+        </p>
+      </main>
+      <Alt />
+    </>
   );
 }
