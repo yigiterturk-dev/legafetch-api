@@ -131,6 +131,16 @@ MEVZUAT_MIN_SKOR = float(os.environ.get("MEVZUAT_MIN_SKOR", "-999"))
 # hiçbir içerik sözcüğü paylaşmıyordu. En az bir anlamlı sözcük örtüşmesini
 # oranla şart koş; 0.15 değeri ölçüm setindeki en düşük doğru adayın (0.20)
 # altında kalır. Genel arama kolundan doğal biçimde gelen mevzuatı etkilemez.
+# Nihai cevaba giren AZAMI farkli kanun maddesi sayisi. 2 degeri mevzuat
+# 19 kanunken konmustu; 73 kanunda havuz yogunlasti ve 2026-09-21 teshisinde
+# 15 kayip sorunun 7'sinde dogru madde ilk 8 aday arasina girdigi halde
+# (hatta @2-@3) bu kota yuzunden cevaba giremedi (teshis_madde.py, asama D).
+# Olculdu 2026-09-21, kota 2->4: kapsam 23->26/30, erisim 15->17/20,
+# dogrulama 17->18/20 (toplam %79 -> %87); ictihat seti DEGISMEDI
+# (konu@1 %96, merci %92). Uc setin ucunde de kazandi: asiri uyum degil.
+# k=6'da 4 madde ictihada 2 yer birakirdi; CORPUS_K 8'e cikarildi ki
+# dayanak artarken ictihat sayisi (4) korunsun.
+MEVZUAT_GARANTI = int(os.environ.get("MEVZUAT_GARANTI", "4"))
 MEVZUAT_MIN_ANAHTAR_ORANI = float(
     os.environ.get("MEVZUAT_MIN_ANAHTAR_ORANI", "0.15")
 )
@@ -948,7 +958,8 @@ def corpus_rank(query: str, k: int = None, suzgec: dict | None = None) -> list:
              ham_skor, anahtar_orani)
         )
     mev_skorlu.sort(key=lambda x: x[1], reverse=True)
-    # Kanun dayanagi temsili garanti: en iyi 2 FARKLI madde her cevapta yer
+    # Kanun dayanagi temsili garanti: en iyi MEVZUAT_GARANTI adet FARKLI
+    # madde her cevapta yer
     # alir (içtihat maddeye ATIF yapar, maddeyi İÇERMEZ)
     # (dokuman, ham_rerank_skoru) — ham skor basa-koyma kararinda kullanilir
     mev_eniyi, gorulen_madde = [], set()
@@ -968,7 +979,7 @@ def corpus_rank(query: str, k: int = None, suzgec: dict | None = None) -> list:
             mev_eniyi.append((d, ham_skor))
             print(f"[mevzuat-secildi] skor={skor:.3f} ham={ham_skor:.3f} "
                   f"hit={anahtar_orani:.3f} :: {kaynak[:70]}", flush=True)
-        if len(mev_eniyi) == 2:
+        if len(mev_eniyi) >= MEVZUAT_GARANTI:
             break
     ictihat = [d for d, _ in skorlu if d.metadata.get("tur") != "mevzuat"]
     # SIRALAMA (2026-09-21 olculdu): mevzuat sona eklenince dogru kanun
