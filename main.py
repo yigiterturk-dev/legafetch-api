@@ -9,7 +9,9 @@ from collections import deque
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, Filter, FieldCondition, MatchValue
+from qdrant_client.models import (
+    Distance, VectorParams, Filter, FieldCondition, MatchValue, DatetimeRange,
+)
 from langchain_core.documents import Document
 
 import ipaddress
@@ -268,11 +270,27 @@ async def verify_license(request: VerifyRequest):
 class ChatRequest(BaseModel):
     query: str
     jurisdiction: Optional[str] = "global"
+    # Suzgecler (2026-09-21). Qdrant payload'inda INDEKSLI alanlar uzerinden
+    # calisir: tur (keyword) ve tarih (datetime). 'jurisdiction' alani
+    # payload'da YOK — onunla suzmeye kalkma, sessizce bos doner.
+    tur: Optional[str] = None          # "Yargitay karari" | "Danistay karari" | "AYM karari" | "ictihat" | "kanun"
+    tarih_bas: Optional[str] = None    # YYYY-MM-DD
+    tarih_son: Optional[str] = None    # YYYY-MM-DD
 
 class SourceMetadata(BaseModel):
     source: str
     authority_score: int
     jurisdiction: str
+    # Konsolda kaynak panelini besleyen alanlar (2026-09-21). Hepsi Qdrant
+    # payload'inda zaten duruyordu, API'den disari verilmiyordu.
+    metin: str = ""
+    tarih: str = ""
+    daire: str = ""
+    esasNo: str = ""
+    kararNo: str = ""
+    kurum: str = ""          # payload "tur": Yargitay karari / kanun / ...
+    belgeSinifi: str = ""    # "yargi-karari" | "mevzuat"
+    docId: str = ""
 
 class ChatResponse(BaseModel):
     text: str
@@ -337,6 +355,66 @@ def ensure_seed() -> None:
             [d for d in sample_docs if d.page_content],
             ids=[stable_id(d) for d in sample_docs if d.page_content],
         )
+
+
+# --- SUZGECLER (2026-09-21) ------------------------------------------
+# Yalniz INDEKSLI payload alanlari kullanilir; indekssiz alanla suzmek
+# 9,87M noktada tam tarama demek (olculdu: sentetik indekssizken kol 5 sn,
+# indeksliyken 1,3 sn). Indeksliler: tur, belgeSinifi, yargiKademesi,
+# yargiMercii, daire, esasNo, kararNo, docId, sentetik, alan, kararTuru
+# + 2026-09-21'de eklenen tarih (datetime).
+MEVZUAT_TURLERI = {"kanun", "yönetmelik"}
+
+
+def suzgec_kosullari(suzgec: dict | None) -> list:
+    """ChatRequest suzgeclerini Qdrant kosullarina cevirir."""
+    if not suzgec:
+        return []
+    kosullar = []
+    tur = (suzgec.get("tur") or "").strip()
+    if tur:
+        kosullar.append(FieldCondition(key="tur", match=MatchValue(value=tur)))
+    bas = (suzgec.get("tarih_bas") or "").strip()
+    son = (suzgec.get("tarih_son") or "").strip()
+    if bas or son:
+        kosullar.append(
+            FieldCondition(
+                key="tarih",
+                range=DatetimeRange(
+                    gte=f"{bas}T00:00:00Z" if bas else None,
+                    lte=f"{son}T23:59:59Z" if son else None,
+                ),
+            )
+        )
+    return kosullar
+
+
+def mevzuat_kolu_acik(suzgec: dict | None) -> bool:
+    """Tur suzgeci ictihada kilitliyse mevzuat kolunu hic calistirma."""
+    tur = ((suzgec or {}).get("tur") or "").strip()
+    return (not tur) or (tur in MEVZUAT_TURLERI)
+
+
+def ictihat_kolu_acik(suzgec: dict | None) -> bool:
+    tur = ((suzgec or {}).get("tur") or "").strip()
+    return (not tur) or (tur not in MEVZUAT_TURLERI)
+
+
+def payload_suzgece_uyar(p: dict, suzgec: dict | None) -> bool:
+    """BM25 kolu bellek ici calisir, Qdrant suzgecinden gecmez — ayni
+    kurallar burada payload uzerinde uygulanir."""
+    if not suzgec:
+        return True
+    tur = (suzgec.get("tur") or "").strip()
+    if tur and (p.get("tur") or "") != tur:
+        return False
+    t = (p.get("tarih") or "")[:10]
+    bas, son = (suzgec.get("tarih_bas") or ""), (suzgec.get("tarih_son") or "")
+    if bas and (not t or t < bas):
+        return False
+    if son and (not t or t > son):
+        return False
+    return True
 
 
 # --- KORPUS ARAMA (REMOTE_MODE): lexordo payload -> Document donusumu ---
@@ -467,7 +545,7 @@ def _mevzuat_metin(p: dict) -> str:
     return baslik + "\n" + metin
 
 
-def _mevzuat_dense_ara(sorgu: str, k: int) -> list:
+def _mevzuat_dense_ara(sorgu: str, k: int, suzgec: dict | None = None) -> list:
     """Tek bir sorgu icin mevzuat filtreli dense arama."""
     vec = embeddings.embed_query("query: " + sorgu)
     sonuc = client.query_points(
@@ -478,7 +556,7 @@ def _mevzuat_dense_ara(sorgu: str, k: int) -> list:
             must=[
                 FieldCondition(key="belgeSinifi", match=MatchValue(value="mevzuat")),
                 FieldCondition(key="sentetik", match=MatchValue(value=False)),
-            ]
+            ] + suzgec_kosullari(suzgec)
         ),
         with_payload=True,
         with_vectors=False,
@@ -499,23 +577,25 @@ def _mevzuat_dense_ara(sorgu: str, k: int) -> list:
                     "kararNo": p.get("kararNo", ""),
                     "docId": p.get("docId", ""),
                     "tur": "mevzuat",
+                    "kurum": p.get("tur", ""),
+                    "belgeSinifi": p.get("belgeSinifi", ""),
                 },
             )
         )
     return docs
 
 
-def corpus_search_mevzuat(query: str, k: int) -> list:
+def corpus_search_mevzuat(query: str, k: int, suzgec: dict | None = None) -> list:
     """Mevzuat kolunda IKI probe: tam soru + anahtar sorgu. 2026-09-17 audit
     olcumu: tam soru embedding'i konu-yonlu sorularda kanun maddesini
     bulamıyor (TKHK m.5 top-24'te bile gorunmuyordu); stopword'suz anahtar
     probe'u m.5'i top-7'ye cikardi. Iki sonuc interleave edilir — her iki
     siralamanin da en iyileri rerank havuzuna girer."""
-    tam = _mevzuat_dense_ara(query, k)
+    tam = _mevzuat_dense_ara(query, k, suzgec)
     anahtar = _anahtar_sorgu(query)
     if not anahtar or _norm_metin(anahtar) == _norm_metin(query):
         return tam
-    probe = _mevzuat_dense_ara(anahtar, max(2, k // 2))
+    probe = _mevzuat_dense_ara(anahtar, max(2, k // 2), suzgec)
     gorulen, birlesik = set(), []
     for a, b in zip(tam, probe + [None] * len(tam)):
         for d in (a, b):
@@ -532,7 +612,7 @@ def corpus_search_mevzuat(query: str, k: int) -> list:
     return birlesik
 
 
-def corpus_search(query: str, k: int) -> list:
+def corpus_search(query: str, k: int, suzgec: dict | None = None) -> list:
     # Uzak korpusa e5 'query: ' onekiyle semantic arama yapar.
     vec = embeddings.embed_query("query: " + query)
     sonuc = client.query_points(
@@ -541,6 +621,7 @@ def corpus_search(query: str, k: int) -> list:
         limit=k,
         query_filter=Filter(
             must=[FieldCondition(key="sentetik", match=MatchValue(value=False))]
+            + suzgec_kosullari(suzgec)
         ),
         with_payload=True,
         with_vectors=False,
@@ -568,6 +649,8 @@ def corpus_search(query: str, k: int) -> list:
                     "kararNo": p.get("kararNo", ""),
                     "docId": p.get("docId", ""),
                     "tur": p.get("belgeSinifi", ""),
+                    "kurum": p.get("tur", ""),
+                    "belgeSinifi": p.get("belgeSinifi", ""),
                 },
             )
         )
@@ -678,7 +761,7 @@ def _tekillestir(docs: list) -> list:
 # /api/chat ile eval'lerin AYNI yolu olcmesi icin handler'dan cikarildi.
 # Ders (2026-09-17 eval_rerank): eval kendi kopyasini yazinca mevzuat kolu
 # hic olculmedi ve "mevzuat=0" yanlisi cikti — olcum = uretim olmali.
-def _mevzuat_bm25_ara(query: str, k: int) -> list:
+def _mevzuat_bm25_ara(query: str, k: int, suzgec: dict | None = None) -> list:
     """Sozcuksel mevzuat kolu (bellek ici BM25).
 
     Dense kolun kor noktasi: 9,86M ictihata karsi 8,4K mevzuat var, ve e5
@@ -695,6 +778,8 @@ def _mevzuat_bm25_ara(query: str, k: int) -> list:
         return []
     docs = []
     for pl, skor in idx.ara(query, k):
+        if not payload_suzgece_uyar(pl, suzgec):
+            continue
         docs.append(
             Document(
                 page_content=pl.get("metin", ""),
@@ -708,6 +793,8 @@ def _mevzuat_bm25_ara(query: str, k: int) -> list:
                     "kararNo": pl.get("kararNo", ""),
                     "docId": pl.get("docId", ""),
                     "tur": "mevzuat",
+                    "kurum": pl.get("tur", ""),
+                    "belgeSinifi": pl.get("belgeSinifi", ""),
                     "bm25_skor": round(skor, 3),
                 },
             )
@@ -715,19 +802,30 @@ def _mevzuat_bm25_ara(query: str, k: int) -> list:
     return docs
 
 
-def corpus_rank(query: str, k: int = None) -> list:
+def corpus_rank(query: str, k: int = None, suzgec: dict | None = None) -> list:
     """Ictihat + mevzuat kollari (paralel) -> kanun-no daraltma -> tek gecis
     rerank -> garanti en iyi 2 FARKLI mevzuat madde. Uretim ve eval ortak yol."""
     k = k if k is not None else CORPUS_K
+    # Tur suzgeci bir kolu tamamen disarida birakiyorsa o kolu hic calistirma:
+    # bos donecek bir Qdrant sorgusu da ~5 sn suruyor.
+    mev_acik = mevzuat_kolu_acik(suzgec)
+    ict_acik = ictihat_kolu_acik(suzgec)
     with ThreadPoolExecutor(max_workers=3) as havuz:
-        f_aday = havuz.submit(corpus_search, query, max(k, CORPUS_FETCH_K))
-        f_mev = havuz.submit(corpus_search_mevzuat, query, CORPUS_MEVZUAT_FETCH_K)
+        f_aday = (
+            havuz.submit(corpus_search, query, max(k, CORPUS_FETCH_K), suzgec)
+            if ict_acik else None
+        )
+        f_mev = (
+            havuz.submit(corpus_search_mevzuat, query, CORPUS_MEVZUAT_FETCH_K, suzgec)
+            if mev_acik else None
+        )
         f_bm25 = (
-            havuz.submit(_mevzuat_bm25_ara, query, CORPUS_MEVZUAT_BM25_K)
-            if CORPUS_MEVZUAT_BM25_K > 0
+            havuz.submit(_mevzuat_bm25_ara, query, CORPUS_MEVZUAT_BM25_K, suzgec)
+            if CORPUS_MEVZUAT_BM25_K > 0 and mev_acik
             else None
         )
-        aday, mev_ham = f_aday.result(), f_mev.result()
+        aday = f_aday.result() if f_aday is not None else []
+        mev_ham = f_mev.result() if f_mev is not None else []
         mev_bm25 = f_bm25.result() if f_bm25 is not None else []
     # Mevzuat havuzu Qdrant'tan genis cekilir (ucuz), kanun no'ya daraltilir,
     # sonra yalnizca ilk CORPUS_MEVZUAT_K'si rerank'e girer (pahali).
@@ -840,7 +938,14 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
             if jur and jur != "TR":
                 docs = []
             else:
-                docs = corpus_rank(request.query)
+                docs = corpus_rank(
+                    request.query,
+                    suzgec={
+                        "tur": request.tur,
+                        "tarih_bas": request.tarih_bas,
+                        "tarih_son": request.tarih_son,
+                    },
+                )
         else:
             search_kwargs = {"k": 2}
             if jur:
@@ -852,9 +957,15 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
             docs = retriever.invoke(request.query)
 
         if not docs:
-             return ChatResponse(
-                text="Bu sorguya uygun bir pasaj kendi veritabanınızda bulunamadı.",
-                sources=[]
+            suzgecli = any([request.tur, request.tarih_bas, request.tarih_son])
+            return ChatResponse(
+                text=(
+                    "Seçtiğiniz süzgeçlere uyan bir pasaj bulunamadı. "
+                    "Süzgeçleri gevşetip tekrar deneyin."
+                    if suzgecli
+                    else "Bu sorguya uygun bir pasaj külliyatta bulunamadı."
+                ),
+                sources=[],
             )
 
         # Keyless extractive kompozisyon: otorite skoruna gore numaralandir
@@ -877,8 +988,7 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
             parts = [
                 f"[{i}] {doc.page_content}\n"
                 f"    Kaynak: {doc.metadata.get('source', 'Bilinmeyen')} "
-                f"(güven %{doc.metadata.get('authority_score', 50)}, "
-                f"{doc.metadata.get('jurisdiction', 'Global')})"
+                f"(kaynak kademesi {doc.metadata.get('authority_score', 50)}/100)"
                 for i, doc in enumerate(ranked, start=1)
             ]
             context_text = (
@@ -891,7 +1001,17 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
             SourceMetadata(
                 source=doc.metadata.get("source", "Bilinmeyen"),
                 authority_score=doc.metadata.get("authority_score", 50),
-                jurisdiction=doc.metadata.get("jurisdiction", "Global")
+                jurisdiction=doc.metadata.get("jurisdiction", "Global"),
+                # Pasajin kendi metni: konsolda kaynak panelinde acilir.
+                # 4.000 kr sinir — tek bir chunk bundan uzun olmuyor.
+                metin=(doc.page_content or "")[:4000],
+                tarih=doc.metadata.get("tarih", ""),
+                daire=doc.metadata.get("daire", ""),
+                esasNo=doc.metadata.get("esasNo", ""),
+                kararNo=doc.metadata.get("kararNo", ""),
+                kurum=doc.metadata.get("kurum", ""),
+                belgeSinifi=doc.metadata.get("belgeSinifi", ""),
+                docId=doc.metadata.get("docId", ""),
             )
             for doc in ranked
         ]
@@ -929,6 +1049,14 @@ async def analyze_contract(file: UploadFile = File(...), api_key: str = Security
             "source": d.metadata.get("source", "Bilinmeyen"),
             "authority_score": d.metadata.get("authority_score", 50),
             "jurisdiction": d.metadata.get("jurisdiction", "Global"),
+            "metin": (d.page_content or "")[:4000],
+            "tarih": d.metadata.get("tarih", ""),
+            "daire": d.metadata.get("daire", ""),
+            "esasNo": d.metadata.get("esasNo", ""),
+            "kararNo": d.metadata.get("kararNo", ""),
+            "kurum": d.metadata.get("kurum", ""),
+            "belgeSinifi": d.metadata.get("belgeSinifi", ""),
+            "docId": d.metadata.get("docId", ""),
         }
         for d in docs
     ]
