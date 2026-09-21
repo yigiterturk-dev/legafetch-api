@@ -47,3 +47,42 @@ docker exec -e PYTHONPATH=/app -w /app legafetch-api python eval_dogrulama.py
 docker exec -e PYTHONPATH=/app -w /app legafetch-api python loglar/eval_kapsam.py
 python3 kanun_envanter.py     # VPS'te: külliyattaki kanun + madde sayısı dökümü
 ```
+
+---
+
+# Madde seçimi teşhisi ve düzeltme — 2026-09-21 (aynı gün, ikinci tur)
+
+`teshis_madde.py` 15 kayıp sorunun hangi aşamada düştüğünü ölçer:
+
+| aşama | ne yapar | kaç kayıp |
+|---|---|---|
+| A dense çekim | `corpus_search_mevzuat(q, 24)` | 2 |
+| B kanun-no daraltma | `mevzuat_havuz_daralt` | **0 — suçsuz** |
+| C rerank dilimi | `[:CORPUS_MEVZUAT_K=8]` | 6 |
+| D rerank + kota | nihai listeye girme | 7 |
+
+**D yapısaldı:** `corpus_rank` nihai cevaba en fazla **2** kanun maddesi
+koyuyordu (`len(mev_eniyi) == 2`). Kural mevzuat 19 kanunken konmuştu; 73
+kanunda doğru madde sık sık üçüncü sıraya düşüp cevaba hiç giremiyordu —
+havuzda @2'de duran madde bile eleniyordu.
+
+**Düzeltme:** kota `MEVZUAT_GARANTI` ile ayarlanabilir, varsayılan **4**.
+`CORPUS_K` 6 → 8 (dayanak artarken içtihat sayısı 4'te kalsın).
+
+| set | kota 2 | **kota 4** |
+|---|---|---|
+| kapsam (30) | 23 (%77) | **26 (%87)** |
+| erişim (20) | 15 (%75) | **17 (%85)** |
+| doğrulama (20) | 17 (%85) | **18 (%90)** |
+| **toplam (70)** | **55 (%79)** | **61 (%87)** |
+| içtihat konu@1 (28) | %96 | %96 (değişmedi) |
+
+Üç setin üçünde de kazandı — parametre yalnız kapsam setinde tarandı,
+diğer ikisi görülmemiş doğrulamadır. İçtihat kalitesi bozulmadı.
+
+**Denendi, kazandırmadı:** `CORPUS_MEVZUAT_K` 8 → 16 veya 24 yalnız +1 soru
+getirdi (+1,2 sn) çünkü dilime giren madde D aşamasında yine eleniyordu.
+Kota düzeldikten sonra yeniden ölçülmeli.
+
+**Kalan 9 kayıp:** 2'si dense çekimin hiç getirmediği (A) sorular —
+gömme/sorgu tarafı. Sıradaki teşhis orada.
