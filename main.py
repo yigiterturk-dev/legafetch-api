@@ -1558,8 +1558,22 @@ def db_ac() -> sqlite3.Connection:
             veri TEXT DEFAULT '',
             olusturma TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS test_notlari (
+            id TEXT PRIMARY KEY,
+            kullanici TEXT NOT NULL,
+            alan TEXT NOT NULL,
+            soru TEXT DEFAULT '',
+            cevap TEXT DEFAULT '',
+            kaynaklar TEXT DEFAULT '',
+            karar TEXT DEFAULT '',
+            dogru_madde TEXT DEFAULT '',
+            notu TEXT DEFAULT '',
+            saniye REAL DEFAULT 0,
+            olusturma TEXT NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS ix_dosya_kullanici ON dosyalar(kullanici);
         CREATE INDEX IF NOT EXISTS ix_kayit_dosya ON kayitlar(dosya_id);
+        CREATE INDEX IF NOT EXISTS ix_test_kullanici ON test_notlari(kullanici);
         """
     )
     return baglanti
@@ -1690,6 +1704,87 @@ async def dosya_sil(dosya_id: str, request: Request,
             raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
         b.execute("DELETE FROM kayitlar WHERE dosya_id = ?", (dosya_id,))
     return {"silindi": True}
+
+
+# --- Saha testi notlari ---------------------------------------------------
+#
+# Neden ayri tablo: avukat denemesinde olculen sey "cevap dogru mu" degil,
+# "bunu bir dilekcede kullanir miydin" — bu yargiyi ancak insan verir ve
+# kaybolmamasi gerekir. hit@5 otomatik olculuyor (eval_*.py); burasi onun
+# insan tarafi. Dosyalar tablosuna karistirilmadi: dosyalar musteri isi,
+# bu ise urun gelistirme verisi.
+
+KARARLAR = {"evet", "duzelterek", "hayir"}
+ALANLAR = {"arama", "sozlesme", "dilekce", "genel"}
+
+
+class TestNotuRequest(BaseModel):
+    alan: str = "arama"                  # arama | sozlesme | dilekce | genel
+    soru: Optional[str] = ""
+    cevap: Optional[str] = ""
+    kaynaklar: Optional[list] = None     # gosterilen kaynak basliklari
+    karar: Optional[str] = ""            # evet | duzelterek | hayir
+    dogru_madde: Optional[str] = ""      # "olmasi gereken" — kacirilan madde
+    notu: Optional[str] = ""
+    saniye: Optional[float] = 0
+
+
+@app.post("/api/test-notu")
+async def test_notu_ekle(govde: TestNotuRequest, request: Request,
+                         api_key: str = Security(get_api_key)):
+    karar = (govde.karar or "").strip().lower()
+    alan = (govde.alan or "arama").strip().lower()
+    if alan not in ALANLAR:
+        raise HTTPException(status_code=400, detail="Bilinmeyen alan.")
+    if karar and karar not in KARARLAR:
+        raise HTTPException(status_code=400, detail="Bilinmeyen karar.")
+    if not karar and not (govde.notu or "").strip():
+        raise HTTPException(status_code=400, detail="Karar ya da not gerekli.")
+    kimlik = uuidlib.uuid4().hex
+    with db_ac() as b:
+        b.execute(
+            "INSERT INTO test_notlari (id, kullanici, alan, soru, cevap, kaynaklar,"
+            " karar, dogru_madde, notu, saniye, olusturma) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                kimlik, kullanici_kimligi(request), alan,
+                (govde.soru or "")[:2000], (govde.cevap or "")[:8000],
+                json.dumps((govde.kaynaklar or [])[:10], ensure_ascii=False),
+                karar, (govde.dogru_madde or "")[:200], (govde.notu or "")[:4000],
+                float(govde.saniye or 0), _simdi(),
+            ),
+        )
+    return {"id": kimlik}
+
+
+@app.get("/api/test-notlari")
+async def test_notlari(api_key: str = Security(get_api_key)):
+    """Tum notlar tek havuzda: degerlendirmeyi kim yazdiysa yazsin,
+    urun kararini toplamina bakarak veriyoruz."""
+    with db_ac() as b:
+        satirlar = [dict(r) for r in b.execute(
+            "SELECT * FROM test_notlari ORDER BY olusturma DESC LIMIT 500"
+        ).fetchall()]
+    ozet = {"evet": 0, "duzelterek": 0, "hayir": 0, "notsuz": 0}
+    alan_dagilimi: dict = {}
+    for r in satirlar:
+        if r["karar"] in KARARLAR:
+            ozet[r["karar"]] += 1
+        else:
+            ozet["notsuz"] += 1        # karar verilmemis, serbest not
+        alan_dagilimi[r["alan"]] = alan_dagilimi.get(r["alan"], 0) + 1
+        try:
+            r["kaynaklar"] = json.loads(r["kaynaklar"] or "[]")
+        except Exception:
+            r["kaynaklar"] = []
+    kararli = ozet["evet"] + ozet["duzelterek"] + ozet["hayir"]
+    return {
+        "notlar": satirlar,
+        "ozet": ozet,
+        "alan": alan_dagilimi,
+        "kararli": kararli,
+        "kullanilabilir_oran": round(
+            100 * (ozet["evet"] + ozet["duzelterek"]) / kararli) if kararli else None,
+    }
 
 
 @app.get("/api/admin/stats")

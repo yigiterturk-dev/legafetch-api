@@ -9,6 +9,7 @@ const SEKMELER = [
   { yol: "/konsol/sozlesme", ad: "Sözleşme", aciklama: "Yüklenen sözleşmenin risk denetimi" },
   { yol: "/konsol/dosyalar", ad: "Dosyalar", aciklama: "İş dosyaları ve içine kaydedilenler" },
   { yol: "/konsol/hesap", ad: "Hesaplayıcı", aciklama: "Kıdem, ihbar, faiz" },
+  { yol: "/konsol/test", ad: "Saha testi", aciklama: "Cevapları değerlendirin — ürün geliştirme notu" },
 ];
 
 export default function KonsolGezinti() {
