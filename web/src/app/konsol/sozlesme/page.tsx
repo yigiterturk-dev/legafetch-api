@@ -74,7 +74,7 @@ export default function SozlesmePage() {
             <input
               type="file"
               hidden
-              accept=".pdf,.txt,.docx,.md"
+              accept=".pdf,.txt,.docx,.udf,.md"
               onChange={yukle}
               disabled={calisiyor}
             />

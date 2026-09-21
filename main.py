@@ -756,6 +756,27 @@ def belge_metni_cikar(ad: str, ham: bytes) -> str:
             return "\n".join((sayfa.extract_text() or "") for sayfa in okuyucu.pages[:40])
         except Exception:
             return ""
+    if ad.endswith(".udf"):
+        # UDF = UYAP Dokuman Formati. Govde bir zip; icinde content.xml var ve
+        # duz metin <content><![CDATA[...]]></content> icinde durur. Bicim
+        # bilgisi (offset/stil) ayri dugumlerde, metni okumak icin gereksiz.
+        # Avukatin gunluk dosyasi bu formatta; okuyamamak ureticiyi kor birakir.
+        try:
+            with zipfile.ZipFile(io.BytesIO(ham)) as z:
+                adlar = z.namelist()
+                hedef = "content.xml" if "content.xml" in adlar else next(
+                    (a for a in adlar if a.endswith("content.xml")), None)
+                if not hedef:
+                    return ""
+                xml = z.read(hedef).decode("utf-8", "ignore")
+            cd = re.search(r"<!\[CDATA\[(.*?)\]\]>", xml, re.S)
+            if cd:
+                return cd.group(1)
+            # CDATA yoksa (bazi uretici araclar duz yazar) etiketleri soy.
+            xml = re.sub(r"</(paragraph|p)>", "\n", xml)
+            return re.sub(r"<[^>]+>", "", xml)
+        except Exception:
+            return ""
     if ad.endswith(".docx"):
         try:
             with zipfile.ZipFile(io.BytesIO(ham)) as z:
@@ -1141,6 +1162,44 @@ SOZLESME_SISTEM = (
     '{"tur": "...", "ozet": "...", "riskler": [{"madde": "...", "bulgu": "...", '
     '"onem": "yuksek|orta|dusuk", "dayanak": [1,2]}], "eksikler": ["..."]}'
 )
+
+
+# --- Belgeden metin cikarma (tum sekmeler icin ortak) --------------------
+#
+# Neden ayri uc: dilekce sekmesinde evrak yukleme yoktu, avukat olayi elle
+# yazmak zorunda kaliyor ve tasla$k "ustunkoru" cikiyordu (2026-09-21 saha
+# geri bildirimi). Belgeyi sessizce ureticiye yedirmek YERINE metni geri
+# veriyoruz: avukat ne okundugunu GORUR, kirpar, duzeltir. Uydurma riskini
+# gorunur kilan tasarim budur.
+
+class BelgeMetni(BaseModel):
+    dosya: str
+    metin: str
+    karakter: int
+    uyari: str = ""
+
+
+@app.post("/api/belge-metni", response_model=BelgeMetni)
+async def belge_metni(file: UploadFile = File(...),
+                      api_key: str = Security(get_api_key)):
+    ham = await file.read()
+    if len(ham) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Dosya 10 MB sınırını aşıyor.")
+    ad = file.filename or ""
+    metin = belge_metni_cikar(ad, ham).strip()
+    if not metin:
+        raise HTTPException(
+            status_code=422,
+            detail="Belgeden okunabilir metin çıkarılamadı. Taranmış (görüntü) "
+                   "PDF ise metin katmanı yok — OCR'lı bir sürüm deneyin.",
+        )
+    azami = 40000
+    uyari = ""
+    if len(metin) > azami:
+        uyari = (f"Belge {len(metin):,} karakter; ilk {azami:,} karakteri "
+                 "alındı.").replace(",", ".")
+        metin = metin[:azami]
+    return BelgeMetni(dosya=ad, metin=metin, karakter=len(metin), uyari=uyari)
 
 
 @app.post("/api/analyze-contract")

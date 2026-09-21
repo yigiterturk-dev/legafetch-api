@@ -43,10 +43,38 @@ export default function DilekcePage() {
   const [dosyaNo, setDosyaNo] = useState("");
   const [talep, setTalep] = useState("");
   const [olay, setOlay] = useState("");
+  const [okunuyor, setOkunuyor] = useState("");
+  const [belgeHata, setBelgeHata] = useState("");
+  const [eklenen, setEklenen] = useState<string[]>([]);
   const [calisiyor, setCalisiyor] = useState(false);
   const [sonuc, setSonuc] = useState<Dilekce | null>(null);
   const [hata, setHata] = useState("");
   const [saniye, setSaniye] = useState<number | null>(null);
+
+  /** Belgeyi sunucuda metne cevirir ve maddi olay alanina EKLER.
+   *  Sessizce ureticiye yedirmiyoruz: avukat ne okundugunu gorsun, kirpsin. */
+  const belgeEkle = async (dosya: File) => {
+    setBelgeHata("");
+    setOkunuyor(dosya.name);
+    try {
+      const form = new FormData();
+      form.append("file", dosya);
+      const yanit = await fetch(`${API_PROXY}/belge-metni`, { method: "POST", body: form });
+      const d = await yanit.json();
+      if (!yanit.ok) throw new Error(d?.detail || `Sunucu ${yanit.status}`);
+      setOlay((o) =>
+        (o ? o.trimEnd() + "\n\n" : "") +
+        `--- ${d.dosya} (belgeden okundu) ---\n${d.metin}`);
+      setEklenen((e) => [
+        ...e,
+        `${d.dosya} · ${d.karakter.toLocaleString("tr-TR")} karakter${d.uyari ? " · " + d.uyari : ""}`,
+      ]);
+    } catch (err) {
+      setBelgeHata(err instanceof Error ? err.message : "Belge okunamadı.");
+    } finally {
+      setOkunuyor("");
+    }
+  };
 
   const uret = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -166,6 +194,32 @@ export default function DilekcePage() {
               />
             </label>
           </div>
+
+          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <label className="dugme" style={{ cursor: okunuyor ? "default" : "pointer" }}>
+              {okunuyor ? `${okunuyor} okunuyor…` : "Evrak yükle (PDF, DOCX, UDF, TXT)"}
+              <input
+                type="file"
+                accept=".pdf,.docx,.udf,.txt,.md"
+                style={{ display: "none" }}
+                disabled={!!okunuyor}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) belgeEkle(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <span className="kucuk">
+              Belgenin metni aşağıdaki alana eklenir; gereksiz kısımları silebilirsiniz.
+            </span>
+          </div>
+          {eklenen.length > 0 && (
+            <ul className="kucuk" style={{ margin: "2px 0 0", paddingLeft: 18 }}>
+              {eklenen.map((e, i) => <li key={i}>{e}</li>)}
+            </ul>
+          )}
+          {belgeHata && <p className="uyari" style={{ margin: 0 }}>{belgeHata}</p>}
 
           <label>
             <span className="alan-etiket">
