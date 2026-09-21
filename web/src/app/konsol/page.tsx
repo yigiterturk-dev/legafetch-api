@@ -383,8 +383,8 @@ export default function Home() {
             <small>yargı kararı pasajı</small>
           </div>
           <div>
-            <span>8.362</span>
-            <small>mevzuat pasajı (19 kanun)</small>
+            <span>15.479</span>
+            <small>mevzuat pasajı (73 kanun)</small>
           </div>
         </div>
 

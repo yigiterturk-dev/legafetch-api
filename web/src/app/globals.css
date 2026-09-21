@@ -274,9 +274,7 @@ h3 {
 
 /* ---- kaynak rozetleri ---- */
 .kaynaklar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  display: block;
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px dashed var(--kenar);

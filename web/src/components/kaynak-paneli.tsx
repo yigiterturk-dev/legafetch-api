@@ -25,6 +25,19 @@ export function kademeAdi(puan: number): string {
   return "Diğer içtihat";
 }
 
+/**
+ * Kaynak metni mevzuat-mcp'den markdown olarak geliyor: madde başlıkları
+ * `**MADDE 23**` biçiminde. Ekranda yıldızları ham göstermek çirkin ve
+ * kullanıcıyı "bu metin bozuk mu" diye düşündürüyor; sadece soyuyoruz.
+ */
+function pasajiTemizle(m?: string): string {
+  return (m || "")
+    .replace(/\*\*/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function trTarih(iso?: string): string {
   if (!iso || iso.length < 10) return "";
   const [y, a, g] = iso.slice(0, 10).split("-");
@@ -104,7 +117,7 @@ export default function KaynakKarti({
       {acik && (
         <div className="kaynak-pasaj">
           {kaynak.metin?.trim() ? (
-            kaynak.metin
+            pasajiTemizle(kaynak.metin)
           ) : (
             <span className="kucuk">Bu kaynak için pasaj metni dönmedi.</span>
           )}

@@ -21,7 +21,7 @@ export default function AltyapiSayfasi() {
             <h3>Vektör veritabanı</h3>
             <p className="kucuk" style={{ marginTop: 6 }}>
               Qdrant. İki koleksiyon: yoğun vektörler 9.860.914 pasaj, seyrek
-              (kelime tabanlı) 6.242.036 pasaj. Külliyatın 8.362 pasajı mevzuat,
+              (kelime tabanlı) 6.242.036 pasaj. Külliyatın 15.479 pasajı mevzuat,
               kalanı yargı kararı.
             </p>
           </div>
@@ -53,8 +53,9 @@ export default function AltyapiSayfasi() {
         <h2 style={{ marginTop: 40 }}>Dürüst sınırlar</h2>
         <ul className="kucuk" style={{ marginTop: 10, paddingLeft: 18, display: "grid", gap: 8 }}>
           <li>
-            Külliyat ağırlıklı olarak içtihattır. Mevzuat tarafı 19 kanunla
-            sınırlıdır; aradığınız kanun külliyatta olmayabilir.
+            Külliyat ağırlıklı olarak içtihattır. Mevzuat tarafı 73 kanunla
+            sınırlıdır; yönetmelik ve tebliğ henüz yok, aradığınız düzenleme
+            külliyatta olmayabilir.
           </li>
           <li>
             Cevabı bir dil modeli yazar; yalnızca bulunan pasajlara dayanması

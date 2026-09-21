@@ -26,7 +26,7 @@ const NEDEN = [
 ];
 
 const SINIRLAR = [
-  "Külliyat ağırlıklı olarak içtihattır; mevzuat tarafı şu an 19 kanunla sınırlıdır.",
+  "Külliyat ağırlıklı olarak içtihattır; mevzuat tarafı 73 kanunla sınırlıdır — yönetmelik ve tebliğler henüz yok.",
   "Cevabı bir dil modeli yazar. Yalnızca bulunan pasajlara dayanması istenir ama bu garanti değildir; atıfları açıp okuyun.",
   "Sorgunuz ve eşleşen pasajlar, cevabı yazdırmak için OpenAI'ye gönderilir. Yüklediğiniz belgeler gönderilmez.",
   "Motor hukuki görüş üretmez. Çıkan sonucun olayınıza uygunluğunu siz değerlendirirsiniz.",
@@ -72,8 +72,8 @@ export default function TanitimSayfasi() {
               <small>yargı kararı pasajı</small>
             </div>
             <div>
-              <span>8.362</span>
-              <small>mevzuat pasajı (19 kanun)</small>
+              <span>15.479</span>
+              <small>mevzuat pasajı (73 kanun)</small>
             </div>
             <div>
               <span>4 sn</span>
