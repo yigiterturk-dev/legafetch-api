@@ -1,0 +1,39 @@
+api.legafetch.com {
+	log {
+		output file /var/log/caddy/erisim.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+		format json
+	}
+	header {
+		# HSTS: tarayici bu alan adina bir yil boyunca yalnizca HTTPS ile gitsin.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+	encode zstd gzip
+	reverse_proxy api:8000 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
+}
+
+legafetch.com, www.legafetch.com {
+	log {
+		output file /var/log/caddy/web-erisim.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+		format json
+	}
+	header {
+		# HSTS: tarayici bu alan adina bir yil boyunca yalnizca HTTPS ile gitsin.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+	encode zstd gzip
+	reverse_proxy web:3000 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
+}

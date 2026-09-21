@@ -231,8 +231,17 @@ def check_rate_limit(client_ip: str, sozluk: dict = None, tavan: int = None) -> 
     return True
 
 
+# Izleme uclari hiz sinirinin DISINDA: /health kimliksiz ve ucuz, ama kotaya
+# dahilken normal trafik kotayi doldurunca 429 donuyordu -> izleme yanlis alarm
+# veriyordu (konteyner ici healthcheck ayri kovadan geldigi icin uretim
+# dusmuyordu, sadece olcum yalan soyluyordu).
+IZLEME_YOLLARI = frozenset({"/health"})
+
+
 @app.middleware("http")
 async def rate_limit_middleware(request, call_next):
+    if request.url.path in IZLEME_YOLLARI:
+        return await call_next(request)
     ip = istemci_ip(request)
     if request.url.path == "/api/auth/verify" and not check_rate_limit(
         ip, _auth_hits, AUTH_RATE_LIMIT_PER_MIN
