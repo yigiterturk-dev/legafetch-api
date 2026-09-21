@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Security, HTTPException, status, Request
+from fastapi import FastAPI, UploadFile, File, Form, Security, HTTPException, status, Request
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
@@ -28,6 +28,8 @@ import hashlib
 import uuid as uuidlib
 import pypdf
 import zipfile
+
+import iscilik
 
 app = FastAPI(title="LegaFetch Core - Legal AI Infrastructure")
 
@@ -1868,3 +1870,166 @@ async def get_admin_stats(api_key: str = Security(get_api_key)):
         "vector_count": client.count(collection_name).count,
         "uptime_hours": round((time.time() - PROCESS_START) / 3600, 2),
     }
+
+
+# ---------------------------------------------------------------------------
+# İşçilik alacağı: SGK hizmet dökümü + fesih belgesi -> kıdem/ihbar hesabı
+# ---------------------------------------------------------------------------
+
+ISCILIK_SISTEM = """Sen bir Türk iş hukuku belgesi okuyucususun. Sana SGK
+hizmet dökümü ve/veya fesih ihtarnamesi metni verilir. GÖREVİN SADECE BELGEDEN
+VERİ ÇIKARMAK. Hesap yapma, yorum yapma, tahmin etme.
+
+Kurallar:
+- Belgede olmayan hiçbir sayıyı yazma. Bulamadığın alanı null bırak.
+- Tutarları belgedeki yazılışıyla (ör. "94.195,38") string olarak ver.
+- Tarihleri YYYY-MM-DD biçimine çevir.
+- Eksik gün kodunu belgedeki iki haneli kodla ver (ör. "21").
+
+Yalnız şu JSON'u döndür:
+{
+  "ise_giris": "YYYY-MM-DD|null",
+  "isten_cikis": "YYYY-MM-DD|null",
+  "fesih_tarihi": "YYYY-MM-DD|null",
+  "fesheden": "isci|isveren|null",
+  "fesih_gerekcesi": "kısa özet|null",
+  "isyeri": "unvan|null",
+  "son_kazanc": "belgedeki son ay SGK kazancı|null",
+  "son_kazanc_donemi": "YYYY-MM|null",
+  "satirlar": [
+    {"donem":"YYYY-MM","isyeri":"","prim_gun":0,"kazanc":"","eksik_gun":0,"eksik_kod":""}
+  ],
+  "notlar": ["belgede çelişkili/okunamayan yer varsa kısa not"]
+}"""
+
+
+class IscilikSonuc(BaseModel):
+    dosyalar: List[str]
+    tespit: dict
+    senaryolar: List[dict]
+    ihbar: dict
+    yillik_izin: dict
+    eksik_gun: dict
+    tavan: dict
+    cekinceler: List[str]
+
+
+@app.post("/api/iscilik-hesabi", response_model=IscilikSonuc)
+async def iscilik_hesabi(
+    files: List[UploadFile] = File(...),
+    giydirilmis_aylik: Optional[float] = Form(None),
+    tavan: Optional[float] = Form(None),
+    fesheden: Optional[str] = Form(None),
+    api_key: str = Security(get_api_key),
+):
+    """Hizmet dökümü + ihtarname -> kıdem/ihbar tazminatı.
+
+    Bölüşüm: belgeden veriyi LLM çıkarır, tutarı `iscilik` modülü hesaplar.
+    Model çarpma yapmaz; çıkardığı her kazanç belgede birebir aranır."""
+    if len(files) > 5:
+        raise HTTPException(status_code=413, detail="En fazla 5 belge yükleyin.")
+
+    parcalar, adlar = [], []
+    for f in files:
+        ham = await f.read()
+        if len(ham) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413,
+                                detail=f"{f.filename}: 10 MB sınırını aşıyor.")
+        metin = belge_metni_cikar(f.filename or "", ham).strip()
+        if metin:
+            adlar.append(f.filename or "")
+            parcalar.append(f"--- BELGE: {f.filename} ---\n{metin}")
+    if not parcalar:
+        raise HTTPException(
+            status_code=422,
+            detail="Belgelerden okunabilir metin çıkarılamadı. Taranmış PDF ise "
+                   "metin katmanı yok — OCR'lı sürüm yükleyin.",
+        )
+
+    ham_metin = "\n\n".join(parcalar)[:SOZLESME_AZAMI_KARAKTER]
+    cevap = llm_cagir(ISCILIK_SISTEM, ham_metin, azami_token=2000,
+                      sicaklik=0.0, json_modu=True)
+    if not cevap:
+        raise HTTPException(
+            status_code=503,
+            detail="Belge okuma servisi şu an yanıt vermiyor; hesabı elle "
+                   "yapmak için /konsol/hesap sayfasını kullanın.")
+    try:
+        veri = json.loads(cevap)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502,
+                            detail="Belgeden yapılandırılmış veri çıkarılamadı.")
+
+    cekinceler = [str(n) for n in (veri.get("notlar") or []) if n]
+    satirlar = iscilik.satirlari_dogrula(veri.get("satirlar") or [], ham_metin)
+    for s in satirlar:
+        if s.uyari:
+            cekinceler.append(f"{s.donem or 'dönem?'}: {s.uyari}")
+    ozet = iscilik.eksik_gun_ozeti(satirlar)
+
+    giris = veri.get("ise_giris")
+    cikis = veri.get("isten_cikis") or veri.get("fesih_tarihi")
+    if not giris or not cikis:
+        raise HTTPException(
+            status_code=422,
+            detail="Belgeden işe giriş ve/veya fesih tarihi okunamadı; "
+                   "hesap yapılmadı.")
+
+    # Ücret: kullanıcı girdiyse o esas. Girmediyse dökümdeki son SGK kazancını
+    # ÖNERİ olarak kullanırız ama çekince yazarız: SGK kazancı giydirilmiş
+    # ücret değildir (mesai ve tek seferlik ödemeler içinde olabilir).
+    aylik = giydirilmis_aylik
+    if not aylik:
+        try:
+            aylik = float(str(veri.get("son_kazanc") or "")
+                          .replace(".", "").replace(",", "."))
+        except ValueError:
+            aylik = 0.0
+        if aylik:
+            cekinceler.append(
+                f"Giydirilmiş ücret girilmedi; dökümdeki son SGK kazancı "
+                f"({veri.get('son_kazanc')} TL, {veri.get('son_kazanc_donemi') or 'dönem?'}) "
+                "kullanıldı. SGK kazancı giydirilmiş ücretle aynı şey değildir — "
+                "fazla mesai ve tek seferlik ödemeler ayrıldığında tutar düşebilir.")
+    if not aylik:
+        raise HTTPException(
+            status_code=422,
+            detail="Giydirilmiş brüt aylık ücret ne belgeden okundu ne de "
+                   "girildi; hesap yapılmadı.")
+
+    tavan_bilgi = iscilik.tavan_bul(cikis)
+    kullanilan_tavan = tavan if (tavan and tavan > 0) else tavan_bilgi["deger"]
+    if tavan and tavan > 0:
+        tavan_bilgi = {**tavan_bilgi, "not": f"Tavan elle girildi: {tavan} TL.",
+                       "kullanilabilir": True, "deger": tavan}
+    elif not kullanilan_tavan:
+        cekinceler.append(tavan_bilgi["not"] + " Tavan uygulanmadan hesaplandı; "
+                          "ücret tavanı aşıyorsa tutar OLDUĞUNDAN YÜKSEK çıkar.")
+
+    kim = (fesheden or veri.get("fesheden") or "isveren").strip()
+    kim = "isci" if kim.startswith("isc") or kim.startswith("işç") else "isveren"
+
+    gun = iscilik.hizmet_gunu(giris, cikis)
+    return IscilikSonuc(
+        dosyalar=adlar,
+        tespit={
+            "ise_giris": giris, "isten_cikis": cikis,
+            "isyeri": veri.get("isyeri") or "",
+            "fesheden": kim,
+            "fesih_gerekcesi": veri.get("fesih_gerekcesi") or "",
+            "hizmet_gunu": gun,
+            "hizmet_suresi": iscilik.sure_metni(gun, giris),
+            "esas_alinan_ucret": round(aylik, 2),
+            "satir_sayisi": len(satirlar),
+        },
+        senaryolar=iscilik.senaryolar(giris, cikis, aylik, kullanilan_tavan, ozet),
+        ihbar=iscilik.ihbar_hesapla(giris, cikis, aylik, kim),
+        yillik_izin={
+            "yillik_hak_gun": iscilik.yillik_izin_hak_gun(gun),
+            "not": ("Kullanılmayan izin tutarı bordro ve izin defteri olmadan "
+                    "hesaplanmaz; burada yalnız yıllık hak ediş gösterildi."),
+        },
+        eksik_gun=ozet,
+        tavan=tavan_bilgi,
+        cekinceler=cekinceler,
+    )

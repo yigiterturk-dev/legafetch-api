@@ -1,0 +1,10 @@
+{
+  "_not": "Kıdem tazminatı yıllık tavanı (TL). Altı ayda bir değişir. 'dogrulandi': false olan satır hesapta KULLANILMAZ; yalnız öneri olarak döner — doğrulayan kişi değeri Resmî Gazete/Hazine genelgesinden teyit edip true yapar ve kaynak yazar.",
+  "donemler": [
+    {"baslangic": "2023-01-01", "bitis": "2023-06-30", "tavan": 19982.83, "dogrulandi": false, "kaynak": ""},
+    {"baslangic": "2023-07-01", "bitis": "2023-12-31", "tavan": 23489.83, "dogrulandi": false, "kaynak": ""},
+    {"baslangic": "2024-01-01", "bitis": "2024-06-30", "tavan": 35058.58, "dogrulandi": false, "kaynak": ""},
+    {"baslangic": "2024-07-01", "bitis": "2024-12-31", "tavan": 41828.42, "dogrulandi": false, "kaynak": ""},
+    {"baslangic": "2025-01-01", "bitis": "2025-06-30", "tavan": 46655.43, "dogrulandi": false, "kaynak": ""}
+  ]
+}

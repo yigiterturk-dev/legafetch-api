@@ -7,7 +7,7 @@ const BACKEND_TIMEOUT_MS = 60_000;
 // Dilekçe ve sözleşme denetimi tek çağrıda uzun metin işler: arama (~12 sn)
 // + LLM (120 sn'ye kadar). 60 sn'lik sohbet sınırı bunları ortasında keser,
 // kullanıcı sebepsiz bir hata görürdü.
-const UZUN_UCLAR = ["dilekce", "analyze-contract"];
+const UZUN_UCLAR = ["dilekce", "analyze-contract", "iscilik-hesabi"];
 const UZUN_TIMEOUT_MS = 180_000;
 
 async function fetchWithTimeout(

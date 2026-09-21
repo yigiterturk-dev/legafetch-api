@@ -722,3 +722,24 @@ main ol { list-style: decimal; }
 main ul { list-style: disc; }
 main li { padding-left: 4px; }
 main li::marker { color: var(--metin-3); }
+
+/* --- veri tablosu: işçilik alacağı senaryoları ve eksik gün kalemleri --- */
+.tablo {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.tablo th,
+.tablo td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--kenar);
+  vertical-align: top;
+}
+.tablo th {
+  font-weight: 600;
+  color: var(--metin-2);
+  background: var(--yuzey);
+  white-space: nowrap;
+}
+.tablo tr:last-child td { border-bottom: 0; }
