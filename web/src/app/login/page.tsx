@@ -62,13 +62,14 @@ export default function GirisEkrani() {
           <input
             id="lisans"
             className="girdi tek"
+            spellCheck={false}
             type="password"
             required
             autoFocus
             autoComplete="off"
             value={anahtar}
             onChange={(e) => setAnahtar(e.target.value)}
-            placeholder="LGF-XXXX-XXXX-XXXX"
+            placeholder="Size verilen anahtarı yapıştırın"
           />
 
           {hata && (
