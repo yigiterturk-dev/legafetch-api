@@ -69,7 +69,10 @@ for soru in SORULAR:
         print(f"❌ ISTEK HATASI: {soru[:40]} -> {e}")
         continue
 
-    metin = cevap.get("answer") or cevap.get("cevap") or ""
+    # 🔴 Yanit alani `text` (ChatResponse.text). Once yalniz answer/cevap
+    # okunuyordu: LLM acikken bile her soru "cevap BOS, katman kapali"
+    # diye rapor ediliyordu — olcum araci kendi kor noktasini uretmisti.
+    metin = cevap.get("text") or cevap.get("answer") or cevap.get("cevap") or ""
     kaynaklar = cevap.get("sources") or cevap.get("kaynaklar") or []
     kaynak_metni = " ".join(
         (k.get("source") or k.get("kaynak") or "") if isinstance(k, dict) else str(k)
