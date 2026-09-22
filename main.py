@@ -61,8 +61,11 @@ if not API_KEY:
     raise RuntimeError("X_API_KEY tanimli degil: .env dosyasina yazilmali (gizli anahtar kodda durmaz)")
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
 
-# Lisans anahtarlari: env'den coklu verilebilir (virgulle)
-LICENSE_KEYS = set(k.strip() for k in os.environ.get("X_LICENSE_KEYS", API_KEY).split(",") if k.strip())
+# Lisans anahtarlari: env'den coklu verilebilir (virgulle).
+# Guvenlik: master API anahtari buraya DUSMEZ — X_LICENSE_KEYS tanimli degilse
+# hicbir lisans gecerli sayilmaz (aksi halde master anahtar "pro" lisans gibi
+# davranir, plan kontrolu bypass olurdu).
+LICENSE_KEYS = set(k.strip() for k in os.environ.get("X_LICENSE_KEYS", "").split(",") if k.strip())
 
 # --- KORPUS MODU: QDRANT_URL tanimliysa uzak (VPS) koleksiyona baglanir ---
 # Uzak korpus (lexordo_pasajlar) e5/Xenova-multilingual-e5-small ile gomulmustur;
@@ -143,6 +146,22 @@ MEVZUAT_MIN_SKOR = float(os.environ.get("MEVZUAT_MIN_SKOR", "-999"))
 # k=6'da 4 madde ictihada 2 yer birakirdi; CORPUS_K 8'e cikarildi ki
 # dayanak artarken ictihat sayisi (4) korunsun.
 MEVZUAT_GARANTI = int(os.environ.get("MEVZUAT_GARANTI", "4"))
+
+# --- JEV ile mevzuat siralamasi (2026-09-21 olculdu) ---
+# bge-reranker-base kisa kanun maddelerinde ayirt edemiyor: beklenen madde
+# rerank havuzuna 18/20 giriyor ama hit@5 %85'te cakili kaliyordu. Havuzu
+# genisletmek NET SIFIR (bir vakayi duzeltip digerini bozdu) -> darbogaz
+# erisim degil SIRALAMA. Jev (TypeSafe) metin uretmez, her aday icin
+# "bu madde soruyu cevapliyor mu" olasiligi doner.
+#   erisim seti      %85 -> %90   MRR 0.729 -> 0.825
+#   dogrulama seti   %90 -> %90   MRR 0.817 -> 0.900
+#   gurultu          7 soruda 6/7 -> 0/7 alakasiz madde (asagi bak)
+# Gecikme +0.3 sn. Jev patlarsa mevcut bge sirasina duser (arama bozulmaz).
+JEV_SIRALAMA = os.environ.get("JEV_SIRALAMA", "0") == "1"
+# Alaka esigi = ABSTAIN KAPISI. Olculdu: alakasiz 6 soruda Jev'in en yuksek
+# alakasi <=0.08, gercek hukuk sorusunda 0.59. Sozcuksel kapi
+# (MEVZUAT_MIN_ANAHTAR_ORANI) ayni testte 7 sorudan 6'sinda madde bastiriyordu.
+JEV_ESIK = float(os.environ.get("JEV_ESIK", "0.5"))
 MEVZUAT_MIN_ANAHTAR_ORANI = float(
     os.environ.get("MEVZUAT_MIN_ANAHTAR_ORANI", "0.15")
 )
@@ -164,7 +183,11 @@ SOZLESME_AZAMI_KARAKTER = int(os.environ.get("SOZLESME_AZAMI_KARAKTER", "24000")
 # Sozlesme analizi tek cagrida uzun metin isler; sohbetin 40 sn'si yetmez.
 SOZLESME_TIMEOUT_S = int(os.environ.get("SOZLESME_TIMEOUT_S", "120"))
 from rerank import rerank, rerank_scored, RERANK_ENABLED  # noqa: E402
-import mevzuat_bm25  # noqa: E402
+import mevzuat_bm25
+try:
+    import jev_mevzuat
+except Exception:  # modul yoksa Jev yolu kapali kalir
+    jev_mevzuat = None  # noqa: E402
 CORPUS_MAX_PER_BELGE = int(os.environ.get("CORPUS_MAX_PER_BELGE", "2"))
 REMOTE_MODE = bool(QDRANT_URL)
 
@@ -908,6 +931,38 @@ def _mevzuat_bm25_ara(query: str, k: int, suzgec: dict | None = None) -> list:
     return docs
 
 
+def _jev_mevzuat_metin(d) -> str:
+    return f"{d.metadata.get('source', '') or ''}\n{d.page_content or ''}"
+
+
+def _jev_mevzuat_sec(query: str, mev_skorlu: list):
+    """Jev ile mevzuat secimi. Jev cevap vermezse None -> cagiran taraf
+    mevcut sozcuksel/esik yoluna devam eder (arama ASLA bozulmaz)."""
+    tekil, gorulen = [], set()
+    for d, _skor, _ham, _oran in mev_skorlu:
+        kaynak = d.metadata.get("source", "")
+        if kaynak in gorulen:
+            continue
+        gorulen.add(kaynak)
+        tekil.append(d)
+    if not tekil:
+        return []
+    skor = jev_mevzuat.alaka_skorla(query, tekil, _jev_mevzuat_metin)
+    if not skor:
+        return None  # Jev ulasilamadi -> eski yola dus
+    bas = tekil[:jev_mevzuat.JEV_ADAY]
+    gecen = [(i, d) for i, d in enumerate(bas) if skor.get(i, 0.0) >= JEV_ESIK]
+    gecen.sort(key=lambda t: skor.get(t[0], 0.0), reverse=True)
+    for i, d in gecen[:MEVZUAT_GARANTI]:
+        print(f"[jev-secildi] alaka={skor.get(i, 0.0):.2f} :: "
+              f"{d.metadata.get('source', '')[:70]}", flush=True)
+    for i, d in enumerate(bas):
+        if skor.get(i, 0.0) < JEV_ESIK:
+            print(f"[jev-elendi] alaka={skor.get(i, 0.0):.2f} :: "
+                  f"{d.metadata.get('source', '')[:70]}", flush=True)
+    return [d for _, d in gecen[:MEVZUAT_GARANTI]]
+
+
 def corpus_rank(query: str, k: int = None, suzgec: dict | None = None) -> list:
     """Ictihat + mevzuat kollari (paralel) -> kanun-no daraltma -> tek gecis
     rerank -> garanti en iyi 2 FARKLI mevzuat madde. Uretim ve eval ortak yol."""
@@ -985,6 +1040,12 @@ def corpus_rank(query: str, k: int = None, suzgec: dict | None = None) -> list:
     # madde her cevapta yer
     # alir (içtihat maddeye ATIF yapar, maddeyi İÇERMEZ)
     # (dokuman, ham_rerank_skoru) — ham skor basa-koyma kararinda kullanilir
+    if JEV_SIRALAMA and jev_mevzuat is not None and jev_mevzuat.yapilandirildi():
+        mev_jev = _jev_mevzuat_sec(query, mev_skorlu)
+        if mev_jev is not None:
+            ictihat = [d for d, _ in skorlu if d.metadata.get("tur") != "mevzuat"]
+            return mev_jev + ictihat[:max(0, k - len(mev_jev))]
+
     mev_eniyi, gorulen_madde = [], set()
     for d, skor, ham_skor, anahtar_orani in mev_skorlu:
         kaynak = d.metadata.get("source", "")
