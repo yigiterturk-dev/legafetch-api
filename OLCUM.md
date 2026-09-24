@@ -136,3 +136,29 @@ havuza girmesini sağlar; D düzeltmesiyle kurtulabilirler.
 geçiyor: 6102-553→395, 6102-376→633, 6458-54→53, 2004-257→258, 6356-41→44.
 `eval_laya.py` (23 Eyl entegrasyonu) Laya'nın bu kayıpları kurtarıp
 kurtaramadığını ölçer.
+
+---
+
+# Laya/Jev sıralayıcı kıyası — 2026-09-24 (kapsam seti, 30 soru)
+
+`eval_laya.py` üç kolon koştu (MEVCUT = bge + anahtar boost + kapılar —
+canlı hat; LAYA = aynı hat, sıralama `laya_mevzuat.sirala`; JEV =
+`jev_mevzuat.sirala`). Laya servisi Hetzner'de, ai-tunnel (172.18.0.1:8100)
+üzerinden. Jev bir koşuda 30 sn timeout'u aşan çağrıyla takıldı — ayrı kusur.
+
+| kolon | hit@5 | MRR | sn/sorgu |
+|---|---|---|---|
+| MEVCUT (canlı) | 25/30 (%83) | 0,778 | 3,9 |
+| LAYA | **16/30 (%53)** | 0,431 | 15,0 |
+| JEV | 26/30 (%87) | 0,783 | 11,9 |
+
+**Okuma:**
+- Laya (mevcut prompt ile) komşu-madde ayrımında bge'den belirgin kötü: −7 soru,
+  MRR −0,35, 4× gecikme. Üretim adayı değil.
+- Jev +1 soru getiriyor ama 3× gecikme + sorgu başı maliyet + takılma kusuru —
+  premium/derin-araştırma modu adayı, varsayılan hat değil.
+
+**Karar:** Sıralayıcı bge'de kalır; 23 Eyl laya/jev bağlantı commit'leri (c44ad10,
+79f1d57) imajda değil ve deploy EDİLMEYECEK. D aşaması kayıplarının düzeltmesi
+sıralayıcı değişikliği değil: kenar başlığı / madde no eşleşme sinyalleri,
+kota ve MEVZUAT_K ayarı — her adım `teshis_madde.py` ile ölçülecek.
