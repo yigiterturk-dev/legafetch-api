@@ -201,3 +201,33 @@ satırı — yani o ölçümler Jev'li hattın; Jev LLM olduğu için koşudan k
 
 **Karar:** `MEVZUAT_DILIM_HIT=1` + `JEV_SIRALAMA=0` yayında. Toplam
 **65/70 (%93)** — baz %87'nin üzerinde +4 soru, 3× hızlanma.
+
+---
+
+# Yedek + restore testi + deploy otomasyonu — 2026-09-24 (dördüncü tur)
+
+## deploy.sh
+Tek komut: git push + rsync + `docker compose build api` + up + health beklemesi
+(300 sn tavan), `--eval` ile kabul ölçümü. İlk gerçek koşu test edildi, yeşil.
+Kullanım: repo kökünde `./deploy.sh` (opsiyonel `--eval`).
+
+## Yedek
+- 20 Eylül yedeği (36,7 GB) göç gününden kalma ve bayatlamıştı.
+- **Yeni snapshot alındı: 24 Eyl 08:27, 37,1 GB, checksum'lu** (iki koşuda
+  ikinci kez üretildi; diskte toplam ~110 GB yedek, 839 GB boş alan).
+- Not: 3 snapshot var (20 Eyl + 2× 24 Eyl) — eskiyi silmek için ayrı onay.
+
+## Restore testi (izole, prod'a dokunmadan)
+- Throwaway qdrant (mem_limit 6g, 127.0.0.1:6335, snapshots rw-mount).
+- İlk deneme read-only mount'la takıldı: qdrant recover, snapshots/tmp'ye
+  yazmak istiyor → **rw mount gerekiyor** (kusur kaydedildi).
+- İkinci deneme 400: recover `location` yolu `snapshots/<koleksiyon>/`
+  alt dizinini içermeli.
+- **Sonuç: BAŞARILI** — test koleksiyonu `green`, `points_count = 9 876 424`
+  = üretimle birebir. Vektör araması test konteynerinde timeout oldu (6g
+  mmap kıtlığı — üretim 24g'de bu sorun yok; aramayı ölçmez, bütünlüğü ölçer).
+- Gerçek restore kanıtı zaten tarihte: 20 Eyl Hetzner→Netcup göçü bu sürecin
+  kendisiydi.
+
+**Kalan:** dış uptime izleme (VPS ölse kim fark eder?) — harici servis ya da
+yerel cron önerisi ayrı karar.
