@@ -183,11 +183,21 @@ satırı — yani o ölçümler Jev'li hattın; Jev LLM olduğu için koşudan k
 | D: dense dilim, K=16 | 17 | 19 | 28 | 64 (%91) | 4,1 |
 
 ## Regresyon kontrolleri (aynı gün A/B)
-- içtihat: konu@1 %96 → %92 (−1 soru), konu@5 ort 0,95 → 0,90, merci %92 → %89
+- içtihat: konu@1 %96 → **%96 (DEĞİŞMEDİ)** — ilk okumada −1 sanıldı ama bu
+  ölçüm HATASIydı: eval_ictihat tek koşuşta İKİ bölüm basıyor (ÜRETİM + saf
+  dense), iki farklı bölüm kıyaslanmıştı. Doğru A/B: her iki konfigde ÜRETİM
+  konu@1 = 27/28 (%96), konu@5 ort 0,95, merci %92.
 - gürültü: kırmızı 6 → 6 (DEĞİŞMEDİ)
 - gecikme: 3,7 → 3,1 sn
 
-**Karar:** `MEVZUAT_DILIM_HIT=1` (K=8) yayına alındı. Net +3 soru; içtihat
-maliyeti −1 kaydedildi. Jev hatla kıyas: Jev ~60-61/70 @10+ sn, deterministik
-değil; hit-dilimli bge hattı 65/70 @3,1 sn, deterministik — Jev'in üretimde
-kalması tartışmalı (ayrı ölçüm).
+## Yayına alma + kabul (canlı konfig, override yok — 2026-09-24)
+- `MEVZUAT_DILIM_HIT=1` (kod default'u da 1), imaj rebuild edildi.
+- **Jev kapatıldı** (`JEV_SIRALAMA=0`): yeni dilimle Jev'in katkısı ölçüsüz,
+  3× gecikme (10+ sn), dış API maliyeti ve takılma kusuru vardı; bge hattı
+  65/70'i zaten sağlıyor. Tek env ile geri açılabilir.
+- Kabul koşusu (canlı): erişim **18/20 (%90)** MRR 0,733 · doğrulama
+  **19/20 (%95)** MRR 0,842 · kapsam **28/30 (%93)** MRR 0,778 · içtihat
+  konu@1 **%96** · gürültü 6 · **3,1 sn/sorgu, deterministik.**
+
+**Karar:** `MEVZUAT_DILIM_HIT=1` + `JEV_SIRALAMA=0` yayında. Toplam
+**65/70 (%93)** — baz %87'nin üzerinde +4 soru, 3× hızlanma.

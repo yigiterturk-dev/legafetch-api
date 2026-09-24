@@ -578,9 +578,10 @@ def mevzuat_havuz_daralt(query: str, mev_aday: list) -> list:
 #   hit_orani dilim (1)  -> 65/70 (%93)  MRR .84/.84/.78  3,1 sn
 #   1 + MEVZUAT_K=16     -> 64/70 (%91)  4,0 sn  (K büyümek kazandirmadi)
 #   0 + MEVZUAT_K=16     -> 64/70 (%91)  4,1 sn
-# Maliyet: ictihat konu@1 %96 -> %92 (daha güçlü mevzuat ilk 5'e girip
-# ictihadi itiyor — eval_ictihat ayni-gun A/B); gurultu DEGISIMEDI (6->6).
-# Net +3 soru, gecikme düsük — varsayilan 1.
+# Maliyet: YOK — ictihat konu@1 %96 DEGISIMEDI (ilk olcumde iki bolumu
+# kiyaslayip -1 sanmistik; eval_ictihat tek kosusta ÜRETİM + saf-dense
+# olarak IKI bolum basiyor, duzeltme 2026-09-24). Gurultu 6 -> 6.
+# Net +4 soru, gecikme düsük — varsayilan 1.
 MEVZUAT_DILIM_HIT = os.environ.get("MEVZUAT_DILIM_HIT", "1").strip() == "1"
 
 
