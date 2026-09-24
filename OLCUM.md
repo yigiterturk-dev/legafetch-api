@@ -162,3 +162,32 @@ canlı hat; LAYA = aynı hat, sıralama `laya_mevzuat.sirala`; JEV =
 79f1d57) imajda değil ve deploy EDİLMEYECEK. D aşaması kayıplarının düzeltmesi
 sıralayıcı değişikliği değil: kenar başlığı / madde no eşleşme sinyalleri,
 kota ve MEVZUAT_K ayarı — her adım `teshis_madde.py` ile ölçülecek.
+
+---
+
+# Dilim teşhisi + hit_orani dilimi — 2026-09-24 (üçüncü tur)
+
+`teshis_d.py` (Jev kapalı, bge hattı, 70 soru) 9 kayıbın kırılımı:
+**7/9'da hedef rerank havuzuna giremiyordu** — dense'de @10-44'te duran madde
+K=8'lik dilime giremiyordu; 2/9'da havuzda var ama GARANTI kotası yetmiyordu.
+(Jev'in canlıda açık olduğu da bu turda netleşti: eval_48 logunda 496 jev
+satırı — yani o ölçümler Jev'li hattın; Jev LLM olduğu için koşudan koşuya
+±1 oynuyor. bge hattı tek başına 61/70, 3,7 sn.)
+
+## Grid (üç set × 70 soru, Jev kapalı)
+| konfig | erişim | doğrulama | kapsam | toplam | sn/sorgu |
+|---|---|---|---|---|---|
+| A: dense dilim, K=8 (baz) | 17 | 18 | 25 | 61 (%87) | 3,7 |
+| **B: hit_orani dilim, K=8** | **18** | **19** | **28** | **65 (%93)** | **3,1** |
+| C: hit_orani dilim, K=16 | 18 | 19 | 27 | 64 (%91) | 4,0 |
+| D: dense dilim, K=16 | 17 | 19 | 28 | 64 (%91) | 4,1 |
+
+## Regresyon kontrolleri (aynı gün A/B)
+- içtihat: konu@1 %96 → %92 (−1 soru), konu@5 ort 0,95 → 0,90, merci %92 → %89
+- gürültü: kırmızı 6 → 6 (DEĞİŞMEDİ)
+- gecikme: 3,7 → 3,1 sn
+
+**Karar:** `MEVZUAT_DILIM_HIT=1` (K=8) yayına alındı. Net +3 soru; içtihat
+maliyeti −1 kaydedildi. Jev hatla kıyas: Jev ~60-61/70 @10+ sn, deterministik
+değil; hit-dilimli bge hattı 65/70 @3,1 sn, deterministik — Jev'in üretimde
+kalması tartışmalı (ayrı ölçüm).

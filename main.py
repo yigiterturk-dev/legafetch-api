@@ -572,6 +572,31 @@ def mevzuat_havuz_daralt(query: str, mev_aday: list) -> list:
     return daralt or mev_aday
 
 
+# Rerank'e girecek mevzuat dilimini (ilk MEVZUAT_K) kim belirler?
+# Ölçüldü 2026-09-24 (grid, üç set × 70 soru, Jev kapalı):
+#   dense dilim (0)      -> 61/70 (%87)  MRR .80/.90/.78  3,7 sn
+#   hit_orani dilim (1)  -> 65/70 (%93)  MRR .84/.84/.78  3,1 sn
+#   1 + MEVZUAT_K=16     -> 64/70 (%91)  4,0 sn  (K büyümek kazandirmadi)
+#   0 + MEVZUAT_K=16     -> 64/70 (%91)  4,1 sn
+# Maliyet: ictihat konu@1 %96 -> %92 (daha güçlü mevzuat ilk 5'e girip
+# ictihadi itiyor — eval_ictihat ayni-gun A/B); gurultu DEGISIMEDI (6->6).
+# Net +3 soru, gecikme düsük — varsayilan 1.
+MEVZUAT_DILIM_HIT = os.environ.get("MEVZUAT_DILIM_HIT", "1").strip() == "1"
+
+
+def _mevzuat_dilim(query: str, dar: list) -> list:
+    """Rerank dilimini sec. DILIM_HIT=1 ise sozcuk ortusmesi once gelir,
+    esitlikte dense sirasi (stabil) korunur; dilim buyuklugu aynidir."""
+    if not MEVZUAT_DILIM_HIT or len(dar) <= CORPUS_MEVZUAT_K:
+        return dar[:CORPUS_MEVZUAT_K]
+    etiketli = [
+        (_anahtar_hit_orani(query, d.page_content), i, d)
+        for i, d in enumerate(dar, 1)
+    ]
+    etiketli.sort(key=lambda t: (-t[0], t[1]))
+    return [d for _, _, d in etiketli[:CORPUS_MEVZUAT_K]]
+
+
 def _mevzuat_metin(p: dict) -> str:
     """Madde metnine kenar basligini onekler.
 
@@ -995,7 +1020,7 @@ def corpus_rank(query: str, k: int = None, suzgec: dict | None = None) -> list:
         mev_bm25 = f_bm25.result() if f_bm25 is not None else []
     # Mevzuat havuzu Qdrant'tan genis cekilir (ucuz), kanun no'ya daraltilir,
     # sonra yalnizca ilk CORPUS_MEVZUAT_K'si rerank'e girer (pahali).
-    mev_aday = mevzuat_havuz_daralt(query, mev_ham)[:CORPUS_MEVZUAT_K]
+    mev_aday = _mevzuat_dilim(query, mevzuat_havuz_daralt(query, mev_ham))
     # Genel havuzdan gelen mevzuat parcalari da kanun-no daraltmasindan gecsin
     mev_aday = mevzuat_havuz_daralt(
         query,
