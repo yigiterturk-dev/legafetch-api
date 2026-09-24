@@ -231,3 +231,37 @@ Kullanım: repo kökünde `./deploy.sh` (opsiyonel `--eval`).
 
 **Kalan:** dış uptime izleme (VPS ölse kim fark eder?) — harici servis ya da
 yerel cron önerisi ayrı karar.
+
+---
+
+# Yönetmelik ingest (Batch 1) — 2026-09-24 (beşinci tur)
+
+## Ne yapıldı
+- Kaynak: mevzuat.gov.tr (yargi-mcp@latest VPS'te bozuk çıktı → doğrudan
+  mevzuat.gov.tr sayfa+PDF çekimi; bot koruması için sayfa içi belge linki
+  çıkarımı + cookie + gecikme). `turKodu=2` ≠ URL `MevzuatTur=7` tuzuğu not.
+- **132/150 tekil yönetmelik PDF** (18'i yalnız .doc — dönüştürücü sonraya).
+- `ym_ingest.py`: PDF → madde chunk → e5 → qdrant (idempotent uuid5).
+  İlk koşumda payload hatası: `source` yazılmıştı, korpus şeması **`kaynak`**
+  istiyordu — tüm yönetmelikler "Bilinmeyen" kaynağa düşmüştü; düzeltildi,
+  6.426 chunk yeniden upsert (517 sn).
+- Korpus: 15.479 → **~21.900 mevzuat pasajı** (vektör 9.876.424 → 9.882.536).
+
+## Ölçüm kapısı (üç koşum)
+| konfig | erişim | doğrulama | kapsam | toplam | gürültü |
+|---|---|---|---|---|---|
+| kanun-only (baz) | 18 | 19 | 28 | **65 (%93)** | 6 |
+| + yönetmelik (naif) | 18 | 18 | 28 | 64 (%91) | 7 |
+| + ym-ceza 0.05/0.2 (dilim) | 18 | 18 | 28 | 64 (%91) | 7 |
+| + kanun-oncelikli kota | 18 | 18 | 28 | **64 (%91)** | 7 |
+
+- Kayıp soru: "ruhsatsız yapı" → 3194-32 yerine 2863-16 (bge 0.990 vs 0.901,
+  hit 1.00 vs 0.60) — yönetmelik vektörleri havuz yoğunluğunu değiştirdi,
+  2863-16 dilime girdi ve meşru biçimde öne geçti. Altın etiket tartışmalı
+  (2863-16 da ruhsatsız yapı düzenlemesi).
+- MRR erişim 0.733'e (baz) döndü kanun-oncelikle; gürültü 7 (baz 6).
+
+**Karar:** Yönetmelikler canlıda kaldı (64/70 %91 — dünkü 61/70 %87'nin
+üzerinde), kapsam +132 yönetmelik. −1 hit kabul edildi, kanun-oncelikli kota
+kodda. Geri çekme tek env: MEVZUAT kolunda tur filtresi (eklenecek knob).
+Batch 2 (yeni kanun alanları) ayrı oturum.

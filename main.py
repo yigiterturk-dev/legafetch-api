@@ -590,8 +590,13 @@ def _mevzuat_dilim(query: str, dar: list) -> list:
     esitlikte dense sirasi (stabil) korunur; dilim buyuklugu aynidir."""
     if not MEVZUAT_DILIM_HIT or len(dar) <= CORPUS_MEVZUAT_K:
         return dar[:CORPUS_MEVZUAT_K]
+    # Yonetmeliklere kucuk ceza: kanun maddesiyle yakin yarista kanun
+    # kazansin (2026-09-24 yonetmelik ingestinde -1 hit, +1 gurultu olculdu;
+    # ceza 0.05 ile yonetmelikler kanun yokken hala yuzeye cikar).
+    ceza = float(os.environ.get("MEVZUAT_YM_CEZA", "0.05"))
     etiketli = [
-        (_anahtar_hit_orani(query, d.page_content), i, d)
+        (_anahtar_hit_orani(query, d.page_content)
+         - (ceza if d.metadata.get("tur") == "yonetmelik" else 0.0), i, d)
         for i, d in enumerate(dar, 1)
     ]
     etiketli.sort(key=lambda t: (-t[0], t[1]))
@@ -1077,6 +1082,12 @@ def corpus_rank(query: str, k: int = None, suzgec: dict | None = None) -> list:
             ictihat = [d for d, _ in skorlu if d.metadata.get("tur") != "mevzuat"]
             return mev_jev + ictihat[:max(0, k - len(mev_jev))]
 
+    # Kanun-oncelikli kota: yonetmelikler (2026-09-24 ingest) yalniz kanun
+    # maddesi bulunamayan yerlerde kota doldursun — kanun dayanagi eval'de
+    # 1 soru kaybettigimiz icin (teshis_ruhsat2: 2863-16 vs 3194-32).
+    mev_kanun = [t for t in mev_skorlu if t[0].metadata.get("kurum", "") != "yonetmelik"]
+    mev_ym = [t for t in mev_skorlu if t[0].metadata.get("kurum", "") == "yonetmelik"]
+    mev_skorlu = mev_kanun + mev_ym
     mev_eniyi, gorulen_madde = [], set()
     for d, skor, ham_skor, anahtar_orani in mev_skorlu:
         kaynak = d.metadata.get("source", "")
