@@ -108,3 +108,31 @@ vektör değil pencere; pencereyi büyütmek yeterli. Rerank dilimi (8) değişm
 için maliyet yalnızca Qdrant fetch boyutu.
 
 Doğrulama: değişiklik sonrası üç set yeniden koşulmalı (61/70 bazına karşı).
+
+---
+
+# FETCH_K 24 vs 48 — aynı gün A/B — 2026-09-24
+
+`CORPUS_MEVZUAT_FETCH_K=48` canlıya alındı, üç set koşuldu; ardından aynı
+külliyatla 24'e dönülüp tekrar koşuldu. Zemin: `teshis_dense.py` çıktısı —
+6102-553 ve 6098-112/114 k=24 penceresinde YOK (k=48'de @44/@53), ayna probe
+ile kendi metinleri @1 → vektörler sağlam, sorun çekim derinliği + D aşaması.
+
+| set | baz (09-21) | fetch=24 (bugün) | fetch=48 (bugün) |
+|---|---|---|---|
+| erişim | 17 | 17 | 17 |
+| doğrulama | 18 | 18 | 18 |
+| kapsam | 26 | 25 | 25 |
+| **toplam** | **61 (%87)** | **60 (%86)** | **60 (%86)** |
+
+**Okuma:** 24 ve 48 bugün birebir aynı; baz farkı (−1) külliyat büyümesinden
+(9.86M→9.87M içtihat), düğmeden değil.
+
+**Karar:** 48'de kal. Hedeflenen 2 soru 24'te havuza hiç giremiyor — D
+aşaması (rerank/kota) düzeltilse bile 24'te kurtarılamazlardı. 48 onların
+havuza girmesini sağlar; D düzeltmesiyle kurtulabilirler.
+
+**Sıradaki teşhis:** D aşaması — aynı kanunun komşu maddeleri rerank'ta öne
+geçiyor: 6102-553→395, 6102-376→633, 6458-54→53, 2004-257→258, 6356-41→44.
+`eval_laya.py` (23 Eyl entegrasyonu) Laya'nın bu kayıpları kurtarıp
+kurtaramadığını ölçer.
