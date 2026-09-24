@@ -81,7 +81,12 @@ CORPUS_MEVZUAT_K = int(os.environ.get("CORPUS_MEVZUAT_K", "8"))
 # Mevzuat kolu 2026-09-17 audit sonrasi: fetch 24 zaten vardi ama MEVZUAT_K 6
 # kalince dogru madde (TKHK m.5 gibi) semantik top-6'ya girip rerank'a
 # ulasamiyordu; cap 8'e cikarildi ve anahtar-sorgu probe'u eklendi.
-CORPUS_MEVZUAT_FETCH_K = int(os.environ.get("CORPUS_MEVZUAT_FETCH_K", "24"))
+# 2026-09-24 teshis_dense olcumu: 15 kayiptan 2'si (6102-553 yonetim kurulu
+# sorumlulugu @44, 6098-112/114 temerrut @53) k=24 penceresinin disinda kaliyordu
+# — ayna probe ile kendi metinleri @1 bulundugundan vektorler saglam, sorun
+# yalnizca cekim derinligiydi. 24 -> 48: rerank dilimi (MEVZUAT_K=8) ayni
+# kaldigindan pahali maliyeti yok, yalnizca Qdrant fetch'i buyur.
+CORPUS_MEVZUAT_FETCH_K = int(os.environ.get("CORPUS_MEVZUAT_FETCH_K", "48"))
 # Sozcuksel (BM25) mevzuat kolunun aday sayisi. Bellek ici indeks,
 # maliyeti milisaniye — rerank'e giren cift sayisini artirdigi icin
 # yine de olculu tutulur.

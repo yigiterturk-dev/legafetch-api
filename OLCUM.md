@@ -88,3 +88,23 @@ Kota düzeldikten sonra yeniden ölçülmeli.
 
 **Kalan 9 kayıp:** 2'si dense çekimin hiç getirmediği (A) sorular —
 gömme/sorgu tarafı. Sıradaki teşhis orada.
+
+---
+
+# Dense çekim (A) teşhisi — 2026-09-24
+
+`teshis_dense.py` 15 kayıp soruyu altı koldan ölçtü (12 sn):
+
+- **var: 15/15 OK** — ithalat suçsuz.
+- **ayna: hepsi @1** — hedef maddenin kendi metni sorgu yapılınca 1. sırada;
+  vektörler kusursuz, gömme tarafında bozukluk yok.
+- **13 soru**: k=24'te zaten çekiliyor → kota düzeltmesiyle hatta düşmüşler.
+- **2 soru "sadece k"**: 6102-553 (mevcut YOK, k48→@44, k96→@49) ve
+  6098-112/114 (mevcut YOK, k48→@53, k96→@61). Anahtar probe ve BM25 de
+  göremiyor (bm25 kolonunda ikisi de YOK).
+
+**Karar:** `CORPUS_MEVZUAT_FETCH_K` 24 → 48. Ayna kanıtına göre sorun
+vektör değil pencere; pencereyi büyütmek yeterli. Rerank dilimi (8) değişmediği
+için maliyet yalnızca Qdrant fetch boyutu.
+
+Doğrulama: değişiklik sonrası üç set yeniden koşulmalı (61/70 bazına karşı).
