@@ -45,6 +45,8 @@ kanun). Sıradaki teşhis burada: madde seçimi, kanun seçimi değil.
 docker exec -e PYTHONPATH=/app -w /app legafetch-api python eval_erisim.py
 docker exec -e PYTHONPATH=/app -w /app legafetch-api python eval_dogrulama.py
 docker exec -e PYTHONPATH=/app -w /app legafetch-api python loglar/eval_kapsam.py
+docker exec -e PYTHONPATH=/app -w /app legafetch-api python teshis_madde.py
+docker exec -e PYTHONPATH=/app -w /app legafetch-api python teshis_dense.py
 python3 kanun_envanter.py     # VPS'te: külliyattaki kanun + madde sayısı dökümü
 ```
 

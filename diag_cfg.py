@@ -31,7 +31,3 @@ instr_b = ("madde_%d alanindaki metin, sorudaki hakkin kosullarini bizzat taniml
            "Yalnizca proseduru, tebligi veya baska bir maddeye atif yapan metinler icin 0 yaz. "
            "Madde hukuki_soru'daki talebi dogrudan duzenliyorsa 1.")
 cal("keskin instr", instr_b)
-diag_ok = True
-if diag_ok:
-    pass
-ELEOF
