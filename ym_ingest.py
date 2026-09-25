@@ -75,7 +75,7 @@ if __name__ == "__main__":
         for doc_id, metin, n in chunks:
             kay = f"{baslik} — {'GİRİŞ' if n is None else 'MADDE ' + n}"
             payload = {
-                "docId": doc_id, "source": kay[:200], "metin": metin[:2000],
+                "docId": doc_id, "source": kay[:200], "kaynak": kay[:200], "metin": metin[:2000],
                 "baslik": baslik[:200], "tur": "yonetmelik", "belgeSinifi": "mevzuat",
                 "tarih": rg, "sentetik": False, "jurisdiction": "TR",
             }
