@@ -9,18 +9,19 @@
 - Hetzner'de 15,6 GB RAM'de Qdrant 14g tavaniyla host'u dibe çekiyordu; burada tek iş
   bu makinede, qdrant tavani **24g**.
 
-## Yığın (tek compose, 5 konteyner)
+## Yığın (tek compose, 6 konteyner)
 Kök dizin: `/opt/legafetch/` — `compose.yaml` + `api/` + `web/` + `caddy/Caddyfile` + `qdrant.env`
 
 | konteyner | iş | limit | not |
 |---|---|---|---|
 | `legafetch-qdrant` | vektör DB (`qdrant/qdrant:v1.18.2`) | 24g | `127.0.0.1:6333` (dışarıya kapalı), autoheal |
 | `legafetch-api` | FastAPI (`main.py`, port 8000) | 6g | `hf-cache` volume, gerçek sorgu logları `./api/loglar` |
+| `legafetch-gateway` | Node.js/TypeScript gateway (port 3001) | 256m | timeout, request ID, readiness, auth forwarding; API secret dosyasına erişmez |
 | `legafetch-web` | Next.js frontend (port 3000) | 1g | `/login` healthcheck |
 | `legafetch-caddy` | TLS + reverse proxy (80/443) | — | Caddyfile `/opt/legafetch/caddy/Caddyfile` |
 | `legafetch-autoheal` | sağlıksız konteyneri restart eder | 64m | 60 sn aralıkla tarar |
 
-- `api.legafetch.com` → `api:8000`, `legafetch.com` + `www` → `web:3000` (aynı Caddyfile).
+- `api.legafetch.com` → `gateway:3001` → `api:8000`, `legafetch.com` + `www` → `web:3000` (aynı Caddyfile).
 - HSTS açık, `Server` başlığı kaldırılmış, zstd/gzip.
 - Web'in ayrıca Vercel projesi var (`legafetch-web`), ama birincil yayın **Netcup**'tan; Vercel yedek.
 
@@ -45,9 +46,29 @@ git push origin main
 rsync -az --exclude venv --exclude qdrant_storage --exclude .git \
   --exclude .env --exclude .next --exclude node_modules \
   -e ssh ./ root@159.195.158.36:/opt/legafetch/api/
-ssh root@159.195.158.36 'cd /opt/legafetch && docker compose up -d --build api'
+ssh root@159.195.158.36 'cd /opt/legafetch && docker compose up -d --build api gateway'
 ```
-(web için aynı akış `web/` hedefine; `--build web`.)
+
+### GitHub Actions → Netcup
+
+`.github/workflows/gateway.yml` içindeki deploy job'ı varsayılan olarak kapalıdır.
+Etkinleştirmek için repository variable olarak `NETCUP_DEPLOY_ENABLED=true`,
+`NETCUP_SSH_HOST=root@159.195.158.36` ve secret olarak `NETCUP_SSH_KEY` ile
+`NETCUP_KNOWN_HOSTS`; public API adresi varsayılan olarak
+`https://api.legafetch.com` kullanılır, gerekirse `LEGAFETCH_PUBLIC_API_URL`
+repository variable'ı ile değiştirilir. Workflow, testler geçtikten sonra `deploy.sh`
+ile API, gateway, web ve Caddy'yi günceller; API ve gateway readiness geçmeden
+başarılı sayılmaz.
+
+Gateway-only değişikliklerde `deploy.sh` varsayılan olarak yalnızca gateway
+image'ını build eder. Python API kodu da değiştiğinde `DEPLOY_SERVICES="api gateway"
+./deploy.sh` kullanılır.
+
+Manuel dış smoke testi:
+
+```bash
+./scripts/smoke-production.sh https://api.legafetch.com
+```
 
 ## Durum kontrolü (VPS'e girmeden)
 ```bash

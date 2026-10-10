@@ -1,5 +1,10 @@
 # LegaFetch API
 
+Production architecture and failure boundaries: [ARCHITECTURE.md](ARCHITECTURE.md).
+Recruiter-facing evidence draft: [PORTFOLIO.md](PORTFOLIO.md).
+Observability coverage: [OBSERVABILITY.md](OBSERVABILITY.md).
+Role feedback mapped to concrete evidence: [ROLE-GAP-CLOSURE.md](ROLE-GAP-CLOSURE.md).
+
 Hukuk mevzuat pasajlarını çok dilli embedding ile vektörleştirip (Qdrant), sorguları
 yasal referanslarla eşleştiren FastAPI servisi. InsureFetch ile aynı mimariyi paylaşır.
 
@@ -60,3 +65,15 @@ pip install -r requirements-dev.txt
 # Dev uvicorn'u durdurun, sonra:
 pytest tests/test_api.py
 ```
+
+## Node.js gateway verification
+
+The production gateway is under `gateway/`. From the repository root:
+
+```bash
+make verify
+```
+
+This runs the TypeScript build, tests, strict type/lint check, and production
+dependency audit. The gateway also has a committed `package-lock.json` so CI
+and local installs resolve the same dependency tree.

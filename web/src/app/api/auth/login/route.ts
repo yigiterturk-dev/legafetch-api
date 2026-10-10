@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BACKEND, getApiKey } from "@/lib/backend";
 import { createSessionToken, kullaniciKimligi } from "@/lib/session";
-import { lisansDogrula, tanimliLisanslar } from "@/lib/lisans";
+import { lisansDogrula, lsLisansDogrula, tanimliLisanslar } from "@/lib/lisans";
 
 // Basit deneme sınırı: IP başına dakikada 10. Tek örnek çalıştığı için bellekte tutmak yeterli.
 const denemeler = new Map<string, { adet: number; pencere: number }>();
@@ -40,10 +40,17 @@ export async function POST(req: NextRequest) {
   if (lisanslar.length > 0) {
     // LGF-XXXX-XXXX-XXXX biçimindeki insan anahtarı burada doğrulanır.
     const bulunan = lisansDogrula(license);
-    if (!bulunan) return NextResponse.json({ ok: false }, { status: 401 });
-    console.log(`[giris] lisans=${bulunan.etiket}`);
-    // Dosya/proje kayıtları bu özete bağlanır (bkz. lib/session.ts).
-    kim = await kullaniciKimligi(bulunan.anahtar);
+    if (bulunan) {
+      console.log(`[giris] lisans=${bulunan.etiket}`);
+      // Dosya/proje kayıtları bu özete bağlanır (bkz. lib/session.ts).
+      kim = await kullaniciKimligi(bulunan.anahtar);
+    } else if (await lsLisansDogrula(license)) {
+      // Lemon Squeezy'den satın alınmış anahtar: LS doğruladı, oturum aç.
+      console.log("[giris] lisans=lemonsqueezy");
+      kim = await kullaniciKimligi(license);
+    } else {
+      return NextResponse.json({ ok: false }, { status: 401 });
+    }
   } else {
     // LISANS_ANAHTARLARI tanımlanmadıysa eski davranış: API anahtarını kabul et.
     let r: Response;

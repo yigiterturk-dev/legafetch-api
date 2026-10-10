@@ -1,4 +1,13 @@
+(secure) {
+	header {
+		Content-Security-Policy "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Content-Type-Options "nosniff"
+	}
+}
+
 api.legafetch.com {
+	import secure
 	log {
 		output file /var/log/caddy/erisim.log {
 			roll_size 20mb
@@ -12,13 +21,14 @@ api.legafetch.com {
 		-Server
 	}
 	encode zstd gzip
-	reverse_proxy api:8000 {
+	reverse_proxy gateway:3001 {
 		header_up X-Forwarded-Proto {scheme}
 		header_up X-Forwarded-Host {host}
 	}
 }
 
 legafetch.com, www.legafetch.com {
+	import secure
 	log {
 		output file /var/log/caddy/web-erisim.log {
 			roll_size 20mb
@@ -33,6 +43,150 @@ legafetch.com, www.legafetch.com {
 	}
 	encode zstd gzip
 	reverse_proxy web:3000 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
+}
+kesicibul.com, www.kesicibul.com {
+	import secure
+	encode zstd gzip
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options SAMEORIGIN
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+	reverse_proxy 172.18.0.1:4180
+}
+insurefetch.159.195.158.36.nip.io {
+	import secure
+	log {
+		output file /var/log/caddy/insurefetch-erisim.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+		format json
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+	encode zstd gzip
+	reverse_proxy insurefetch-web:3001 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
+}
+# AI Gateway — jev + laya, tüm projeler (2026-09-23)
+ai.nocturndev.com {
+	import secure
+	header Strict-Transport-Security "max-age=31536000"
+	@auth header X-Gateway-Key 9ad9aee52446e0ec9681ddb985a913e02f1f91dea8668975
+	handle /nobet/ekran {
+		reverse_proxy 172.18.0.1:8787
+	}
+	handle /rapor/* {
+		reverse_proxy 172.18.0.1:8787
+	}
+        route /quality/* {
+            uri strip_prefix /quality
+            reverse_proxy 172.18.0.1:8790
+        }
+
+	handle_path /audit/* {
+		reverse_proxy 172.18.0.1:8788
+	}
+	handle_path /seo/* {
+		reverse_proxy 172.18.0.1:4185
+	}
+	handle @auth {
+		handle_path /laya/* {
+			reverse_proxy 172.18.0.1:8100
+		}
+		handle /nobet/* {
+			reverse_proxy 172.18.0.1:8787
+		}
+		handle /sir/* {
+			reverse_proxy 172.18.0.1:8787
+		}
+		handle /maske* {
+			reverse_proxy 172.18.0.1:8787
+		}
+		handle /kota/* {
+			reverse_proxy 172.18.0.1:8787
+		}
+		handle_path /jev/* {
+			reverse_proxy https://api.typesafe.ai {
+				header_up Host api.typesafe.ai
+				header_up Authorization "Bearer apikey_224aa7a401b5e604c9cb2cadcf725bdc16f_50f9f8eeec94c94a9a1f3665036303f6cb7945adf979c91a57c379ccdfd5e7f7"
+			}
+		}
+	}
+	respond 401
+}
+
+# LifeOS — iki kullanıcılı hayat panosu (2026-09-29)
+lifeos.nocturndev.com {
+	import secure
+	log {
+		output file /var/log/caddy/lifeos-erisim.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+		format json
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+	encode zstd gzip
+	reverse_proxy lifeos-web:5000 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
+}
+
+# VegaVault Kasa
+vegavault.nocturndev.com {
+	import secure
+	log {
+		output file /var/log/caddy/vegavault-erisim.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+		format json
+	}
+	header {
+		Strict-Transport-Security max-age=31536000
+		-Server
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+	encode zstd gzip
+	reverse_proxy 172.18.0.1:3001
+}
+
+# VegaHost — oda bazli kiralama yonetimi (2026-10-08)
+vegahost.nocturndev.com {
+	import secure
+	log {
+		output file /var/log/caddy/vegahost-erisim.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+		format json
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+	encode zstd gzip
+	reverse_proxy 172.18.0.1:3002 {
 		header_up X-Forwarded-Proto {scheme}
 		header_up X-Forwarded-Host {host}
 	}

@@ -1,6 +1,10 @@
 import React from "react";
 import Ust, { Alt } from "@/components/ust";
 
+// Lemon Squeezy mağazası açıldığında LS_MAGAZA_URL env'i verilir; düğme o zaman
+// belirir. Tanımsızken sayfa birebir bugünkü hâlinde kalır (build-time sabittir).
+const MAGAZA = process.env.LS_MAGAZA_URL?.trim();
+
 export const metadata = {
   title: "LegaFetch — Türk hukuk külliyatında anlam tabanlı arama",
   description:
@@ -55,7 +59,12 @@ export default function TanitimSayfasi() {
           </p>
 
           <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 28 }}>
-            <a href="/login" className="dugme dugme-ana">
+            {MAGAZA && (
+              <a href={MAGAZA} className="dugme dugme-ana" target="_blank" rel="noreferrer">
+                Hemen satın al
+              </a>
+            )}
+            <a href="/login" className={MAGAZA ? "dugme dugme-sade" : "dugme dugme-ana"}>
               Lisans anahtarıyla gir
             </a>
             <a

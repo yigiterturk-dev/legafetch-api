@@ -54,3 +54,33 @@ export function yeniAnahtar(): string {
   const harfler = Array.from(bayt, (b) => ALFABE[b % ALFABE.length]).join("");
   return `LGF-${harfler.slice(0, 4)}-${harfler.slice(4, 8)}-${harfler.slice(8, 12)}`;
 }
+
+// Lemon Squeezy satın alım anahtarları: statik listede yokken LS License API'si
+// sorulur (uç anahtarsız çalışır). Sonuç 6 saat önbelleklenir; her giriş LS'e
+// gitmesin. LS_LISANS=1 olmadan bu yol hiç açılmaz — mağaza açılana dek davranış
+// birebir bugünkü gibi kalır.
+const lsOnbellek = new Map<string, { gecerli: boolean; t: number }>();
+const LS_TTL_MS = 6 * 3_600_000;
+
+export async function lsLisansDogrula(anahtar: string): Promise<boolean> {
+  if (process.env.LS_LISANS !== "1") return false;
+  const kayit = lsOnbellek.get(anahtar);
+  const simdi = Date.now();
+  if (kayit && simdi - kayit.t < LS_TTL_MS) return kayit.gecerli;
+  let gecerli = false;
+  try {
+    const r = await fetch("https://api.lemonsqueezy.com/v1/licenses/validate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ license_key: anahtar }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
+    const j = (await r.json().catch(() => null)) as { valid?: boolean } | null;
+    gecerli = r.ok && j?.valid === true;
+  } catch {
+    gecerli = false;
+  }
+  lsOnbellek.set(anahtar, { gecerli, t: simdi });
+  return gecerli;
+}
