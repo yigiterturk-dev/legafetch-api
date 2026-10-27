@@ -1,10 +1,10 @@
 # LegaFetch — Netcup VPS Deploy (tek makine yığını)
 
-> 2026-09-20'de Hetzner'den Netcup'a taşındı. Eski adres (89.167.52.36) geçersiz.
+> 2026-09-20'de Hetzner'den Netcup'a taşındı. Eski adres (<OLD_HOST>) geçersiz.
 > Bu doküman 2026-09-24'te canlı health + repo yapısına göre doğrulandı.
 
 ## Sunucu
-- **Netcup VPS 4000 G12**: 31 GB RAM, 12 vCPU, 1 TB — `159.195.158.36`
+- **Netcup VPS 4000 G12**: 31 GB RAM, 12 vCPU, 1 TB — `<VPS_HOST>`
 - DNS: `legafetch.com`, `www.legafetch.com`, `api.legafetch.com` → hepsi bu makineye A kaydı.
 - Hetzner'de 15,6 GB RAM'de Qdrant 14g tavaniyla host'u dibe çekiyordu; burada tek iş
   bu makinede, qdrant tavani **24g**.
@@ -33,7 +33,7 @@ Kök dizin: `/opt/legafetch/` — `compose.yaml` + `api/` + `web/` + `caddy/Cadd
 
 ## Komutlar
 ```bash
-ssh root@159.195.158.36
+ssh root@<VPS_HOST>
 cd /opt/legafetch
 docker compose ps                      # yığın durumu
 docker compose up -d --build           # güncelleme (rsync sonrası)
@@ -45,15 +45,15 @@ docker logs -f legafetch-api           # canlı log
 git push origin main
 rsync -az --exclude venv --exclude qdrant_storage --exclude .git \
   --exclude .env --exclude .next --exclude node_modules \
-  -e ssh ./ root@159.195.158.36:/opt/legafetch/api/
-ssh root@159.195.158.36 'cd /opt/legafetch && docker compose up -d --build api gateway'
+  -e ssh ./ root@<VPS_HOST>:/opt/legafetch/api/
+ssh root@<VPS_HOST> 'cd /opt/legafetch && docker compose up -d --build api gateway'
 ```
 
 ### GitHub Actions → Netcup
 
 `.github/workflows/gateway.yml` içindeki deploy job'ı varsayılan olarak kapalıdır.
 Etkinleştirmek için repository variable olarak `NETCUP_DEPLOY_ENABLED=true`,
-`NETCUP_SSH_HOST=root@159.195.158.36` ve secret olarak `NETCUP_SSH_KEY` ile
+`NETCUP_SSH_HOST=root@<VPS_HOST>` ve secret olarak `NETCUP_SSH_KEY` ile
 `NETCUP_KNOWN_HOSTS`; public API adresi varsayılan olarak
 `https://api.legafetch.com` kullanılır, gerekirse `LEGAFETCH_PUBLIC_API_URL`
 repository variable'ı ile değiştirilir. Workflow, testler geçtikten sonra `deploy.sh`
